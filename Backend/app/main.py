@@ -14,7 +14,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 
-
+# 
 @app.on_event("startup")
 async def startup_db():
     try:
