@@ -10,9 +10,14 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     name: str
-    role: str  # admin or user
+    speed: int  # 1=Slow, 2=Medium, 3=Fast
+    address: str
+
 @router.post("/register")
 async def register(body: RegisterRequest):
+    if body.speed not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail="Speed must be 1, 2, or 3")
+
     existing_user = await db["users"].find_one({"email": body.email})
 
     if existing_user:
@@ -22,7 +27,8 @@ async def register(body: RegisterRequest):
         "email": body.email,
         "password": body.password,
         "name": body.name,
-        "role": body.role
+        "speed": body.speed,
+        "address": body.address,
     }
 
     await db["users"].insert_one(new_user)

@@ -28,7 +28,7 @@ export default function HomeScreen() {
       {loading && <ActivityIndicator size="large" color="#1a73e8" />}
       {message ? <Text style={styles.success}>✅ {message}</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      <TouchableOpacity style={styles.button} onPress={() => router.replace('/login')}>
+      <TouchableOpacity style={styles.button} onPress={() => router.replace('/login' as never)}>
         <Text style={styles.buttonText}>Go to Login</Text>
       </TouchableOpacity>
     </View>

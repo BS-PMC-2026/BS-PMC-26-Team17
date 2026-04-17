@@ -42,7 +42,7 @@ export default function LoginScreen() {
       }
 
       // Login success → go to home tabs
-      router.replace('/(tabs)');
+      router.replace('/(tabs)/map');
     } catch (e) {
       setError('Cannot connect to server');
     } finally {
@@ -90,6 +90,10 @@ export default function LoginScreen() {
           ) : (
             <Text style={styles.buttonText}>Login</Text>
           )}
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.linkButton} onPress={() => router.replace('/register' as never)}>
+          <Text style={styles.linkText}>Don't have an account? <Text style={styles.linkTextBold}>Register</Text></Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.backButton} onPress={() => router.replace('/(tabs)')}>
@@ -165,6 +169,18 @@ const styles = StyleSheet.create({
     color: '#0a7ea4',
     fontSize: 15,
     fontWeight: '500',
+  },
+  linkButton: {
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  linkText: {
+    color: '#666',
+    fontSize: 14,
+  },
+  linkTextBold: {
+    color: '#0a7ea4',
+    fontWeight: '600',
   },
   error: {
     color: '#e74c3c',

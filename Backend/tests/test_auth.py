@@ -92,3 +92,75 @@ async def test_login_missing_fields():
         })
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_register_success():
+    """New user registers successfully."""
+    mock_collection = MagicMock()
+    mock_collection.find_one = AsyncMock(return_value=None)
+    mock_collection.insert_one = AsyncMock(return_value=MagicMock(inserted_id="abc123"))
+
+    mock_db = MagicMock()
+    mock_db.__getitem__ = MagicMock(return_value=mock_collection)
+
+    with patch("app.routes.auth.db", mock_db):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/auth/register", json={
+                "email": "new@example.com",
+                "password": "pass123",
+                "name": "New User",
+                "speed": 2,
+                "address": "123 Main St",
+            })
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "User registered successfully"
+
+
+@pytest.mark.asyncio
+async def test_register_duplicate_email():
+    """Duplicate email returns 400."""
+    existing_user = {"email": "dup@example.com"}
+
+    mock_collection = MagicMock()
+    mock_collection.find_one = AsyncMock(return_value=existing_user)
+
+    mock_db = MagicMock()
+    mock_db.__getitem__ = MagicMock(return_value=mock_collection)
+
+    with patch("app.routes.auth.db", mock_db):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/auth/register", json={
+                "email": "dup@example.com",
+                "password": "pass123",
+                "name": "Dup User",
+                "speed": 1,
+                "address": "456 Oak Ave",
+            })
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "User already exists"
+
+
+@pytest.mark.asyncio
+async def test_register_invalid_speed():
+    """Invalid speed value returns 400."""
+    mock_collection = MagicMock()
+    mock_collection.find_one = AsyncMock(return_value=None)
+
+    mock_db = MagicMock()
+    mock_db.__getitem__ = MagicMock(return_value=mock_collection)
+
+    with patch("app.routes.auth.db", mock_db):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/auth/register", json={
+                "email": "test@example.com",
+                "password": "pass123",
+                "name": "Test User",
+                "speed": 5,
+                "address": "789 Pine Rd",
+            })
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Speed must be 1, 2, or 3"
