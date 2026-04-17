@@ -1,9 +1,21 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import health
+from app.routes import health, auth
 from app.core.database import client
 
-app = FastAPI(title="ToSafePlace API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        await client.admin.command("ping")
+        print("✅ Connected to MongoDB Atlas!")
+    except Exception as e:
+        print(f"❌ MongoDB connection failed: {e}")
+    yield
+
+
+app = FastAPI(title="ToSafePlace API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -13,15 +25,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
-
-# 
-@app.on_event("startup")
-async def startup_db():
-    try:
-        await client.admin.command("ping")
-        print("✅ Connected to MongoDB Atlas!")
-    except Exception as e:
-        print(f"❌ MongoDB connection failed: {e}")
+app.include_router(auth.router)
 
 
 @app.get("/")
