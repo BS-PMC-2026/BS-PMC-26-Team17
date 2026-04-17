@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 import os
 import certifi
 import ssl
-
 load_dotenv()
 
 MONGODB_URL = os.getenv("MONGODB_URL")
