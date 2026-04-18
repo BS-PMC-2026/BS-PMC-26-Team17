@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'rea
 import { router } from 'expo-router';
 import axios from 'axios';
 
-const API_URL = 'http://192.168.1.220:8000'; // Update with your backend API URL
+const API_URL = 'http://192.168.1.241:8000'; // שנה ל-IP שלך מ: ipconfig getifaddr en0
 
 export default function HomeScreen() {
   const [message, setMessage] = useState('');
