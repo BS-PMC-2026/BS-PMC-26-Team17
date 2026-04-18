@@ -93,7 +93,7 @@ export default function LoginScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.linkButton} onPress={() => router.replace('/register' as never)}>
-          <Text style={styles.linkText}>Don't have an account? <Text style={styles.linkTextBold}>Register</Text></Text>
+          <Text style={styles.linkText}>{"Don't have an account?"} <Text style={styles.linkTextBold}>Register</Text></Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.backButton} onPress={() => router.replace('/(tabs)')}>
