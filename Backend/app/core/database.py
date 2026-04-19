@@ -14,4 +14,4 @@ client = AsyncIOMotorClient(
     tlsCAFile=certifi.where(),
     tlsAllowInvalidCertificates=True
 )
-db = client[DATABASE_NAME]
+db = client[DATABASE_NAME or "tosafe_place"]
