@@ -48,7 +48,7 @@ export default function RegisterScreen() {
       }
 
       router.push('/login' as never);
-    } catch (e) {
+    } catch {
       setError('Cannot connect to server');
     } finally {
       setLoading(false);

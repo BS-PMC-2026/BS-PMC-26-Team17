@@ -47,7 +47,7 @@ export default function LoginScreen() {
       // Save user in context then go to tabs
       login(data.user);
       router.replace('/(tabs)' as never);
-    } catch (e) {
+    } catch {
       setError('Cannot connect to server');
     } finally {
       setLoading(false);
