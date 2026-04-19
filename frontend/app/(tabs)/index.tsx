@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import axios from 'axios';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || '';
+const API_URL = 'https://192.168.1.116:8000'; // שנה ל-IP שלך מ: ipconfig getifaddr en0
 
 export default function HomeScreen() {
   const [message, setMessage] = useState('');
