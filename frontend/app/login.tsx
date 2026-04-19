@@ -11,11 +11,14 @@ import {
   Platform,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useAuth } from '@/context/auth';
+
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const { login } = useAuth();
 
   async function handleLogin() {
     setError('');
@@ -27,8 +30,8 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      // replace with your FastAPI server IP/URL
-      const response = await fetch('http://192.168.1.220:8000/auth/login', {
+      const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://172.19.40.144:8000';
+      const response = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -41,9 +44,10 @@ export default function LoginScreen() {
         return;
       }
 
-      // Login success → go to home tabs
-      router.replace('/(tabs)/map');
-    } catch (e) {
+      // Save user in context then go to tabs
+      login(data.user);
+      router.replace('/(tabs)' as never);
+    } catch {
       setError('Cannot connect to server');
     } finally {
       setLoading(false);
@@ -92,13 +96,10 @@ export default function LoginScreen() {
           )}
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.linkButton} onPress={() => router.replace('/register' as never)}>
+        <TouchableOpacity style={styles.linkButton} onPress={() => router.push('/register' as never)}>
           <Text style={styles.linkText}>{"Don't have an account?"} <Text style={styles.linkTextBold}>Register</Text></Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.backButton} onPress={() => router.replace('/(tabs)')}>
-          <Text style={styles.backButtonText}>Back to Home</Text>
-        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
