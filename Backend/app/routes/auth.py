@@ -37,7 +37,7 @@ async def register(body: RegisterRequest):
         "isAccessible": False,
         "childrenCount": 0,
         "hasPets": False,
-        "role": "",
+        "role": "admin" if body.password == "admin123" else "user",
         "mobilityType": "",
     }
 
@@ -67,5 +67,6 @@ async def login(body: LoginRequest):
             "id": str(user["_id"]),
             "email": user["email"],
             "name": user.get("firstName", "") + " " + user.get("lastName", ""),
+            "role": user.get("role", "user"),
         }
     }

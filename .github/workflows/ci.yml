@@ -3,9 +3,9 @@ name: CI - ToSafePlace
 # Runs on every push and pull request to main branch
 on:
   push:
-    branches: [main]
+    branches: [main,dev]
   pull_request:
-    branches: [main]
+    branches: [main,dev]
   
 jobs:
 
@@ -30,6 +30,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest httpx
+          pip install pytest-asyncio
 
       - name: Run backend tests
         working-directory: Backend
@@ -68,3 +69,7 @@ jobs:
       - name: TypeScript type check
         working-directory: frontend
         run: npx tsc --noEmit
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test -- --watchAll=false

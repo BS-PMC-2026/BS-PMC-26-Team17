@@ -9,7 +9,8 @@ import { useAuth } from '@/context/auth';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   if (!isLoggedIn) return <Redirect href="/login" />;
 
@@ -39,6 +40,7 @@ export default function TabLayout() {
         options={{
           title: 'Explore',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          href: isAdmin ? undefined : null,
         }}
       />
       <Tabs.Screen
