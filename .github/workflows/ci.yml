@@ -3,9 +3,9 @@ name: CI - ToSafePlace
 # Runs on every push and pull request to main branch
 on:
   push:
-    branches: [main]
+    branches: [main,dev]
   pull_request:
-    branches: [main,ci/turtial]
+    branches: [main,dev]
   
 jobs:
 
