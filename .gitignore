@@ -1,2 +1,5 @@
 frontend/env.local
+frontend/.env.local
 Backend/.env
+**/__pycache__/
+**/*.pyc
