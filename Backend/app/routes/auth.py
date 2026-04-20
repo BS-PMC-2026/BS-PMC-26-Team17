@@ -17,16 +17,6 @@ class RegisterRequest(BaseModel):
 @router.post("/register")
 async def register(body: RegisterRequest):
     existing_user = await db["User"].find_one({"email": body.email})
-    name: str
-    speed: int  # 1=Slow, 2=Medium, 3=Fast
-    address: str
-
-@router.post("/register")
-async def register(body: RegisterRequest):
-    if body.speed not in (1, 2, 3):
-        raise HTTPException(status_code=400, detail="Speed must be 1, 2, or 3")
-
-    existing_user = await db["users"].find_one({"email": body.email})
 
     if existing_user:
         raise HTTPException(status_code=400, detail="User already exists")
@@ -38,7 +28,6 @@ async def register(body: RegisterRequest):
         "password": body.password,
         "telephone": body.telephone,
         "address": body.address,
-        # defaults — filled later in settings page
         "neighborhood": "",
         "city": "",
         "hasHomeProtection": False,
@@ -50,9 +39,6 @@ async def register(body: RegisterRequest):
         "hasPets": False,
         "role": "",
         "mobilityType": "",
-        "name": body.name,
-        "speed": body.speed,
-        "address": body.address,
     }
 
     await db["User"].insert_one(new_user)

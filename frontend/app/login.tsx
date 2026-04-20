@@ -30,7 +30,7 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://172.19.40.144:8000';
+      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

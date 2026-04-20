@@ -1,24 +1,38 @@
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
-
+import axios from 'axios';
 export default function HomeScreen() {
-  const { user, logout } = useAuth();
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  function handleLogout() {
-    logout();
-    router.replace('/login' as never);
-  }
+  useEffect(() => {
+    axios.get(`${process.env.EXPO_PUBLIC_API_URL}/api/ping`)
+      .then(res => {
+        setMessage(res.data.message);
+        setLoading(false);
+      })
+      .catch(() => {
+        setError('❌ Cannot connect to API');
+        setLoading(false);
+      });
+  }, []);
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>ToSafePlace 🏠</Text>
-      {user ? (
-        <Text style={styles.welcome}>Welcome, {user.name} 👋</Text>
-      ) : null}
 
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-        <Text style={styles.logoutText}>Log Out</Text>
+      {loading && <ActivityIndicator size="large" color="#1a73e8" />}
+      {message ? <Text style={styles.success}>✅ {message}</Text> : null}
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+
+      <TouchableOpacity
+        style={styles.button}
+        onPress={() => router.replace('/login' as never)}
+      >
+        <Text style={styles.buttonText}>Go to Login</Text>
       </TouchableOpacity>
     </View>
   );
@@ -38,18 +52,24 @@ const styles = StyleSheet.create({
     color: '#0a7ea4',
     marginBottom: 10,
   },
-  welcome: {
-    fontSize: 16,
-    color: '#555',
-    marginBottom: 40,
+  success: {
+    fontSize: 18,
+    color: 'green',
+    marginTop: 10,
   },
-  logoutButton: {
-    backgroundColor: '#e74c3c',
+  error: {
+    fontSize: 18,
+    color: 'red',
+    marginTop: 10,
+  },
+  button: {
+    marginTop: 24,
+    backgroundColor: '#1a73e8',
     paddingVertical: 12,
-    paddingHorizontal: 40,
+    paddingHorizontal: 32,
     borderRadius: 10,
   },
-  logoutText: {
+  buttonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',

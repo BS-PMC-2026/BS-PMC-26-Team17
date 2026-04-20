@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://172.19.40.144:8000';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function RegisterScreen() {
   const [firstName, setFirstName] = useState('');
