@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main,ci/turtial]
   
 jobs:
 
@@ -68,3 +68,7 @@ jobs:
       - name: TypeScript type check
         working-directory: frontend
         run: npx tsc --noEmit
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test -- --watchAll=false
