@@ -26,7 +26,7 @@ type Shelter = {
 
 type ShelterWithCoords = Shelter & { lat: number; lng: number };
 
-function calcDistance(
+export function calcDistance(
   from: { latitude: number; longitude: number } | null,
   to: { lat: number; lng: number }
 ): string {
@@ -43,11 +43,33 @@ function calcDistance(
   return dist < 1000 ? `${Math.round(dist)} מ׳` : `${(dist / 1000).toFixed(1)} ק״מ`;
 }
 
-function markerColor(status: string): string {
-  if (status === 'open') return 'green';
-  if (status === 'closed' || status === 'locked') return 'red';
-  return 'orange';
+export function markerBg(status: string): string {
+  if (status === 'open') return '#1D9E75';
+  if (status === 'closed' || status === 'locked') return '#E24B4A';
+  return '#BA7517';
 }
+
+function ShelterMarker({ status }: { status: string }) {
+  const bg = markerBg(status);
+  return (
+    <View style={[mk.wrap, { borderColor: bg }]}>
+      <View style={[mk.circle, { backgroundColor: bg }]}>
+        <Text style={mk.icon}>🏠</Text>
+      </View>
+      <View style={[mk.tip, { borderTopColor: bg }]} />
+    </View>
+  );
+}
+
+const mk = StyleSheet.create({
+  wrap:   { alignItems: 'center' },
+  circle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+            borderWidth: 2, borderColor: '#fff',
+            shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 5 },
+  icon:   { fontSize: 18 },
+  tip:    { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderTopWidth: 8,
+            borderLeftColor: 'transparent', borderRightColor: 'transparent' },
+});
 
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
@@ -61,15 +83,21 @@ export default function MapScreen() {
   // בקשת מיקום
   useEffect(() => {
     (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({});
-        const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-        setRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 });
-        setUserLocation(coords);
-        setLocationGranted(true);
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+          const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+          setUserLocation(coords);
+          setLocationGranted(true);
+          setRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 });
+          mapRef.current?.animateToRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 500);
+        }
+      } catch (e) {
+        console.error('Location error:', e);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     })();
   }, []);
 
@@ -132,15 +160,17 @@ export default function MapScreen() {
         ref={mapRef}
         style={styles.map}
         provider={PROVIDER_DEFAULT}
-        initialRegion={region}
+        initialRegion={ISRAEL_REGION}
         showsUserLocation={locationGranted}
+        showsMyLocationButton={false}
       >
         {shelters.map((s, i) => (
           <Marker
             key={i}
             coordinate={{ latitude: s.lat, longitude: s.lng }}
-            pinColor={markerColor(s.accessStatus)}
+            tracksViewChanges={false}
           >
+            <ShelterMarker status={s.accessStatus} />
             <Callout>
               <View style={styles.callout}>
                 <Text style={styles.calloutTitle}>{s.name}</Text>
