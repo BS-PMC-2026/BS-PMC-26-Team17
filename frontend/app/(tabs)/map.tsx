@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, Text, ActivityIndicator, TouchableOpacity } from 'react-native';
-import MapView, { Marker, Callout, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import * as Location from 'expo-location';
+import { router } from 'expo-router';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -49,10 +50,11 @@ export function markerBg(status: string): string {
   return '#BA7517';
 }
 
-function ShelterMarker({ status }: { status: string }) {
+// Custom marker — pointerEvents="none" מבטיח שהמגע עובר ל-Marker
+function ShelterPin({ status }: { status: string }) {
   const bg = markerBg(status);
   return (
-    <View style={[mk.wrap, { borderColor: bg }]}>
+    <View pointerEvents="none" style={mk.wrap}>
       <View style={[mk.circle, { backgroundColor: bg }]}>
         <Text style={mk.icon}>🏠</Text>
       </View>
@@ -63,22 +65,29 @@ function ShelterMarker({ status }: { status: string }) {
 
 const mk = StyleSheet.create({
   wrap:   { alignItems: 'center' },
-  circle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
-            borderWidth: 2, borderColor: '#fff',
-            shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 5 },
-  icon:   { fontSize: 18 },
-  tip:    { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderTopWidth: 8,
-            borderLeftColor: 'transparent', borderRightColor: 'transparent' },
+  circle: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#fff',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3, shadowRadius: 3, elevation: 5,
+  },
+  icon: { fontSize: 18 },
+  tip:  {
+    width: 0, height: 0,
+    borderLeftWidth: 6, borderRightWidth: 6, borderTopWidth: 8,
+    borderLeftColor: 'transparent', borderRightColor: 'transparent',
+  },
 });
 
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
-  const [region, setRegion] = useState(ISRAEL_REGION);
   const [loading, setLoading] = useState(true);
   const [locationGranted, setLocationGranted] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [shelters, setShelters] = useState<ShelterWithCoords[]>([]);
   const [geocoding, setGeocoding] = useState(false);
+  const [selectedShelter, setSelectedShelter] = useState<ShelterWithCoords | null>(null);
 
   // בקשת מיקום
   useEffect(() => {
@@ -90,7 +99,6 @@ export default function MapScreen() {
           const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
           setUserLocation(coords);
           setLocationGranted(true);
-          setRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 });
           mapRef.current?.animateToRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 500);
         }
       } catch (e) {
@@ -163,34 +171,20 @@ export default function MapScreen() {
         initialRegion={ISRAEL_REGION}
         showsUserLocation={locationGranted}
         showsMyLocationButton={false}
+        // סוגרים פאנל רק אם לא לחצו על סמן
+        onPress={() => setSelectedShelter(null)}
       >
         {shelters.map((s, i) => (
           <Marker
             key={i}
             coordinate={{ latitude: s.lat, longitude: s.lng }}
             tracksViewChanges={false}
+            onPress={(e) => {
+              e?.stopPropagation?.();       // ← מונע הגעה ל-MapView.onPress
+              setSelectedShelter(s);
+            }}
           >
-            <ShelterMarker status={s.accessStatus} />
-            <Callout>
-              <View style={styles.callout}>
-                <Text style={styles.calloutTitle}>{s.name}</Text>
-                <Text style={styles.calloutRow}>{s.address}</Text>
-                <Text style={styles.calloutRow}>
-                  סטטוס: {s.accessStatus === 'open' ? '✅ פתוח' : s.accessStatus === 'closed' ? '🔴 סגור' : '🟠 לא ידוע'}
-                </Text>
-                <Text style={styles.calloutRow}>
-                  נגיש: {s.isAccessible ? '✅' : '❌'} | מדרגות: {s.hasStairs ? '⚠️' : '✅'}
-                </Text>
-                <Text style={styles.calloutRow}>
-                  קיבולת: {s.capacity ?? '—'} | {s.isFull ? '🔴 מלא' : '✅ פנוי'}
-                </Text>
-                {userLocation && (
-                  <Text style={styles.calloutDistance}>
-                    📍 {calcDistance(userLocation, s)}
-                  </Text>
-                )}
-              </View>
-            </Callout>
+            <ShelterPin status={s.accessStatus} />
           </Marker>
         ))}
       </MapView>
@@ -207,47 +201,89 @@ export default function MapScreen() {
           <Text style={styles.locationIcon}>📍</Text>
         </TouchableOpacity>
       )}
+
+      {/* פאנל מידע מקלט */}
+      {selectedShelter && (
+        <View style={styles.panel} testID="shelter-panel">
+          <TouchableOpacity style={styles.panelClose} onPress={() => setSelectedShelter(null)}>
+            <Text style={styles.panelCloseText}>✕</Text>
+          </TouchableOpacity>
+          <Text style={styles.panelTitle}>{selectedShelter.name}</Text>
+          <Text style={styles.panelRow}>{selectedShelter.address}</Text>
+          <Text style={styles.panelRow}>
+            סטטוס:{' '}
+            {selectedShelter.accessStatus === 'open'
+              ? '✅ פתוח'
+              : selectedShelter.accessStatus === 'closed'
+              ? '🔴 סגור'
+              : '🟠 לא ידוע'}
+          </Text>
+          <Text style={styles.panelRow}>
+            נגיש: {selectedShelter.isAccessible ? '✅' : '❌'} | מדרגות:{' '}
+            {selectedShelter.hasStairs ? '⚠️' : '✅'}
+          </Text>
+          <Text style={styles.panelRow}>
+            קיבולת: {selectedShelter.capacity ?? '—'} |{' '}
+            {selectedShelter.isFull ? '🔴 מלא' : '✅ פנוי'}
+          </Text>
+          {userLocation && (
+            <Text style={styles.panelDistance}>
+              📍 {calcDistance(userLocation, selectedShelter)}
+            </Text>
+          )}
+          <TouchableOpacity
+            style={styles.navigateBtn}
+            onPress={() =>
+              router.push(
+                `/navigate?lat=${selectedShelter.lat}&lng=${selectedShelter.lng}&name=${encodeURIComponent(selectedShelter.name)}`
+              )
+            }
+          >
+            <Text style={styles.navigateBtnText}>🧭 נווט למקלט</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  map: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  loadingText: { marginTop: 12, color: '#666' },
+  container:    { flex: 1 },
+  map:          { flex: 1 },
+  center:       { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  loadingText:  { marginTop: 12, color: '#666' },
   locationButton: {
-    position: 'absolute',
-    bottom: 40,
-    right: 16,
-    backgroundColor: '#fff',
-    borderRadius: 30,
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
+    position: 'absolute', bottom: 40, right: 16,
+    backgroundColor: '#fff', borderRadius: 30,
+    width: 48, height: 48,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 4, elevation: 5,
   },
   locationIcon: { fontSize: 22 },
   geocodingBadge: {
-    position: 'absolute',
-    top: 16,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    position: 'absolute', top: 16, alignSelf: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: '#1a73e8cc',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
   },
   geocodingText: { color: '#fff', fontSize: 14 },
-  callout: { width: 220, padding: 4 },
-  calloutTitle: { fontSize: 15, fontWeight: '700', marginBottom: 6 },
-  calloutRow: { fontSize: 13, color: '#333', marginBottom: 3 },
-  calloutDistance: { fontSize: 13, color: '#1a73e8', marginTop: 4, fontWeight: '600' },
+  panel: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    padding: 20, paddingBottom: 36,
+    shadowColor: '#000', shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.15, shadowRadius: 8, elevation: 10,
+  },
+  panelClose:     { position: 'absolute', top: 14, right: 16, padding: 6 },
+  panelCloseText: { fontSize: 18, color: '#888' },
+  panelTitle:     { fontSize: 17, fontWeight: '700', marginBottom: 8, marginRight: 30 },
+  panelRow:       { fontSize: 13, color: '#444', marginBottom: 4 },
+  panelDistance:  { fontSize: 13, color: '#1a73e8', marginTop: 4, fontWeight: '600', marginBottom: 12 },
+  navigateBtn:    {
+    backgroundColor: '#1a73e8', borderRadius: 10,
+    paddingVertical: 12, alignItems: 'center', marginTop: 8,
+  },
+  navigateBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });

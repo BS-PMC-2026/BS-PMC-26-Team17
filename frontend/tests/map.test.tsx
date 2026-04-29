@@ -14,29 +14,34 @@ jest.mock('expo-location', () => ({
 }));
 
 const mockAnimateToRegion = jest.fn();
+const mockRouterPush = jest.fn();
+
+jest.mock('expo-router', () => ({
+  router: { push: (...args: any[]) => mockRouterPush(...args) },
+}));
 
 jest.mock('react-native-maps', () => {
   const React = require('react');
-  const { View } = require('react-native');
+  const { View, TouchableOpacity } = require('react-native');
 
   const MockMapView = React.forwardRef((props: any, ref: any) => {
     React.useImperativeHandle(ref, () => ({ animateToRegion: mockAnimateToRegion }));
     return <View testID="map-view" {...props} />;
   });
 
-  const MockMarker = ({ children }: any) => (
-    <View testID="shelter-marker">{children}</View>
-  );
-
-  const MockCallout = ({ children }: any) => (
-    <View testID="shelter-callout">{children}</View>
+  const MockMarker = ({ children, onPress }: any) => (
+    <TouchableOpacity
+      testID="shelter-marker"
+      onPress={() => onPress?.({ stopPropagation: () => {} })}
+    >
+      {children}
+    </TouchableOpacity>
   );
 
   return {
     __esModule: true,
     default: MockMapView,
     Marker: MockMarker,
-    Callout: MockCallout,
     PROVIDER_DEFAULT: null,
   };
 });
@@ -62,12 +67,22 @@ function setupGrantedLocation() {
   } as any);
 }
 
+function setupShelterWithCoords() {
+  global.fetch = jest.fn().mockResolvedValue({
+    json: async () => ({ shelters: [mockShelter] }),
+  }) as any;
+  mockLocation.geocodeAsync = jest.fn().mockResolvedValue([
+    { latitude: 31.25, longitude: 34.79 },
+  ]);
+}
+
 // ─── טסטים בסיסיים ───────────────────────────────────────────────────────────
 
 describe('MapScreen — בסיסי', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockAnimateToRegion.mockClear();
+    mockRouterPush.mockClear();
     global.fetch = jest.fn().mockResolvedValue({
       json: async () => ({ shelters: [] }),
     }) as any;
@@ -117,44 +132,15 @@ describe('MapScreen — הצגת מקלטים', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockAnimateToRegion.mockClear();
+    mockRouterPush.mockClear();
     mockLocation.requestForegroundPermissionsAsync.mockResolvedValue({ status: 'denied' } as any);
   });
 
   it('מציג סמן מקלט על המפה לאחר גיאוקודינג', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      json: async () => ({ shelters: [mockShelter] }),
-    }) as any;
-    mockLocation.geocodeAsync = jest.fn().mockResolvedValue([
-      { latitude: 31.25, longitude: 34.79 },
-    ]);
-
+    setupShelterWithCoords();
     const { findAllByTestId } = render(<MapScreen />);
     const markers = await findAllByTestId('shelter-marker');
     expect(markers.length).toBe(1);
-  });
-
-  it('מציג שם מקלט ב-Callout', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      json: async () => ({ shelters: [mockShelter] }),
-    }) as any;
-    mockLocation.geocodeAsync = jest.fn().mockResolvedValue([
-      { latitude: 31.25, longitude: 34.79 },
-    ]);
-
-    const { findByText } = render(<MapScreen />);
-    expect(await findByText('מקלט בן גוריון')).toBeTruthy();
-  });
-
-  it('מציג כתובת מקלט ב-Callout', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      json: async () => ({ shelters: [mockShelter] }),
-    }) as any;
-    mockLocation.geocodeAsync = jest.fn().mockResolvedValue([
-      { latitude: 31.25, longitude: 34.79 },
-    ]);
-
-    const { findByText } = render(<MapScreen />);
-    expect(await findByText('בן גוריון 33')).toBeTruthy();
   });
 
   it('לא קורס כשה-API לא זמין', async () => {
@@ -172,6 +158,35 @@ describe('MapScreen — הצגת מקלטים', () => {
     const { queryAllByTestId } = render(<MapScreen />);
     await waitFor(() => {});
     expect(queryAllByTestId('shelter-marker').length).toBe(0);
+  });
+
+  it('לחיצה על סמן מקלט מציגה פאנל מידע', async () => {
+    setupShelterWithCoords();
+    const { findByTestId, findByText } = render(<MapScreen />);
+    const marker = await findByTestId('shelter-marker');
+    fireEvent.press(marker);
+    expect(await findByTestId('shelter-panel')).toBeTruthy();
+    expect(await findByText('מקלט בן גוריון')).toBeTruthy();
+    expect(await findByText('בן גוריון 33')).toBeTruthy();
+  });
+
+  it('לחיצה על כפתור נווט קוראת לrouter.push עם הנתיב הנכון', async () => {
+    setupShelterWithCoords();
+    const { findByTestId, findByText } = render(<MapScreen />);
+    fireEvent.press(await findByTestId('shelter-marker'));
+    fireEvent.press(await findByText('🧭 נווט למקלט'));
+    expect(mockRouterPush).toHaveBeenCalledWith(
+      expect.stringContaining('/navigate?lat=31.25&lng=34.79')
+    );
+  });
+
+  it('לחיצה על X סוגרת את הפאנל', async () => {
+    setupShelterWithCoords();
+    const { findByTestId, findByText, queryByTestId } = render(<MapScreen />);
+    fireEvent.press(await findByTestId('shelter-marker'));
+    await findByTestId('shelter-panel');
+    fireEvent.press(await findByText('✕'));
+    await waitFor(() => expect(queryByTestId('shelter-panel')).toBeNull());
   });
 });
 
