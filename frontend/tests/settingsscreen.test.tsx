@@ -30,14 +30,14 @@ describe('SettingsScreen Component', () => {
 
   // TEST 1: Rendering and User Interaction
   it('renders correctly and allows user to update the address', async () => {
-    const { getByText, getByPlaceholderText } = renderWithAuth(<SettingsScreen />);
+    const { getByText, getAllByText, getByPlaceholderText } = renderWithAuth(<SettingsScreen />);
 
     // Check if the main header rendered
     expect(getByText('Emergency Settings')).toBeTruthy();
 
-    // Press Edit to reveal the address input
-    const editButton = getByText('Edit');
-    fireEvent.press(editButton);
+    // Press the first Edit button (address)
+    const editButtons = getAllByText('Edit');
+    fireEvent.press(editButtons[0]);
 
     // Find the address input and simulate typing
     const addressInput = getByPlaceholderText('Enter your full address');
