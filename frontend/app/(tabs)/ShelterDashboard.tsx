@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from "react";
 import {
   View, Text, TextInput, ScrollView, StyleSheet,
-  ActivityIndicator, TouchableOpacity, Modal, Pressable,
+  ActivityIndicator, TouchableOpacity, Modal, Pressable, SafeAreaView,
 } from "react-native";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -24,7 +24,7 @@ const REPORT_LABELS: Record<string,string> = { access:"גישה", capacity:"תפ
 const CITIES = ["כל הערים", "Be'er Sheva"];
 const AREAS  = ["כל האזורים", "צפון", "דרום", "מזרח", "מערב"];
 const TYPES  = ["כל הסוגים", "public shelter", "school", "parking", "other"];
-const CHIPS  = ["דווח לאחרונה", "מלאים", "ידידותי לחיות 🐾", "נגישים ♿", "הכול"];
+const CHIPS  = [  " נגישים ♿ " , " לא פעילים", "דווח לאחרונה ", " הכל " , "ידידותי לחיות 🐾"];
 
 function Badge({ value, labels, colors }: { value:string; labels:Record<string,string>; colors:Record<string,string> }) {
   const c = colors[value] || "#888";
@@ -38,7 +38,7 @@ function Badge({ value, labels, colors }: { value:string; labels:Record<string,s
 const bd = StyleSheet.create({
   wrap: { flexDirection:"row", alignItems:"center", gap:6, paddingHorizontal:14, paddingVertical:7, borderRadius:20, borderWidth:0.5, alignSelf:"flex-start" },
   dot:  { width:7, height:7, borderRadius:4 },
-  txt:  { fontSize:16, fontWeight:"500" },
+  txt:  { fontSize:12, fontWeight:"500" },
 });
 
 function Dropdown({ label, value, options, onChange, labelMap }:{
@@ -68,7 +68,7 @@ function Dropdown({ label, value, options, onChange, labelMap }:{
   );
 }
 const dr = StyleSheet.create({
-  btn:      { flexDirection:"row", justifyContent:"space-between", alignItems:"center", backgroundColor:"#242424", borderRadius:10, paddingHorizontal:16, paddingVertical:14, borderWidth:0.5, borderColor:"#3a3a3a" },
+  btn:      { flexDirection:"row", justifyContent:"space-between", alignItems:"center", backgroundColor:"#242424", borderRadius:8, paddingHorizontal:10, paddingVertical:9, borderWidth:0.5, borderColor:"#3a3a3a" },
   val:      { color:"#ddd", fontSize:17, flex:1, textAlign:"right" },
   arrow:    { color:"#666", fontSize:13, marginLeft:6 },
   overlay:  { flex:1, backgroundColor:"#00000099", justifyContent:"center", padding:32 },
@@ -80,19 +80,19 @@ const dr = StyleSheet.create({
 });
 
 const COLS = [
-  { key:"lastReport",   heb:"דיווח אחרון",   width:260 },
-  { key:"reportType",   heb:"סוג דיווח",      width:200 },
-  { key:"cleanliness",  heb:"סטטוס ניקיון",  width:210 },
-  { key:"accessStatus", heb:"סטטוס תפעולי",  width:210 },
-  { key:"isFull",       heb:"עומס",           width:180 },
-  { key:"shouldBeOpen", heb:"מצב נדרש",       width:190 },
-  { key:"capacity",     heb:"קיבולת",         width:160 },
-  { key:"neighborhood", heb:"שכונה",          width:200 },
-  { key:"address",      heb:"כתובת",          width:280 },
-  { key:"name",         heb:"שם המקלט",       width:300 },
+  { key:"lastReport",   heb:"דיווח אחרון",   width:130 },
+  { key:"reportType",   heb:"סוג דיווח",      width:100 },
+  { key:"cleanliness",  heb:"סטטוס ניקיון",  width:110 },
+  { key:"accessStatus", heb:"סטטוס תפעולי",  width:110 },
+  { key:"isFull",       heb:"עומס",           width:90  },
+  { key:"shouldBeOpen", heb:"מצב נדרש",       width:95  },
+  { key:"capacity",     heb:"קיבולת",         width:80  },
+  { key:"neighborhood", heb:"שכונה",          width:100 },
+  { key:"address",      heb:"כתובת",          width:140 },
+  { key:"name",         heb:"שם המקלט",       width:150 },
 ];
 
-const ROW_H = 80;
+const ROW_H = 55;
 
 function timeAgo(dateStr: string): string {
   if (!dateStr) return "—";
@@ -152,8 +152,8 @@ export default function ShelterDashboard() {
   const fullCount   = filtered.filter(s => s.isFull).length;
   const closedCount = filtered.filter(s => s.accessStatus === "closed" || s.accessStatus === "locked").length;
 
-  return (
-    <View style={s.container}>
+return (
+    <SafeAreaView style={s.container}>
 
       {/* כרטיסי סטטוס — סה"כ ימין, סגורים שמאל */}
       <View style={s.statsRow}>
@@ -175,7 +175,7 @@ export default function ShelterDashboard() {
         <Text style={s.searchIcon}>🔍</Text>
         <TextInput
           style={s.searchInput}
-          placeholder="...חיפוש לפי שם, כתובת או שכונה"
+          placeholder="חיפוש לפי שם, כתובת או שכונה ..."
           placeholderTextColor="#666"
           value={search}
           onChangeText={setSearch}
@@ -209,10 +209,9 @@ export default function ShelterDashboard() {
       {loading ? (
         <ActivityIndicator style={{marginTop:40}} color="#378ADD"/>
       ) : (
-        <ScrollView horizontal={false} showsHorizontalScrollIndicator={false} style={{flex:1}}>
+        <ScrollView horizontal showsHorizontalScrollIndicator style={{flex:1}} contentOffset={{x: 99999, y: 0}}>
           <View style={{flex:1}}>
             {/* כותרות */}
-            <ScrollView horizontal showsHorizontalScrollIndicator style={{flex:1}}></ScrollView>
             <View style={s.headerRow}>
               {COLS.map(c => (
                 <Text key={c.key} style={[s.headerCell, {width:c.width}]}>{c.heb}</Text>
@@ -280,12 +279,12 @@ export default function ShelterDashboard() {
 
                    {/* שם */}
                     <View style={[s.cellV, {width:COLS[9].width}]}>
-                    <Text style={[s.bold, {fontSize:18, color:"#fff", textAlign:"right", paddingHorizontal:14}]} numberOfLines={1}>
+                    <Text style={[s.bold, {fontSize:13, color:"#fff", textAlign:"right", paddingHorizontal:8}]} numberOfLines={1}>
     {item.name}
   </Text>
   <View style={{flexDirection:"row", gap:6, paddingHorizontal:14, marginTop:4, justifyContent:"flex-end"}}>
-    {item.isAccessible && !item.hasStairs && <Text style={{fontSize:26}}>♿</Text>}
-    {!item.petIssueReported               && <Text style={{fontSize:26}}>🐾</Text>}
+    {item.isAccessible && !item.hasStairs && <Text style={{fontSize:16}}>♿</Text>}
+    {!item.petIssueReported               && <Text style={{fontSize:16}}>🐾</Text>}
   </View>
 </View>
 
@@ -300,34 +299,34 @@ export default function ShelterDashboard() {
       {/* ספירה למטה */}
       <Text style={s.countLabel}>מציג {filtered.length} מקלטים</Text>
 
-    </View>
+    </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
   container: { flex:1, backgroundColor:"#181818", padding:14, paddingTop:1 },
-  statsRow:    { flexDirection:"row", gap:12, marginBottom:18 },
-  statCard:    { flex:1, backgroundColor:"#242424", borderRadius:16, padding:18, alignItems:"center", borderWidth:0.5, borderColor:"#333" },
+  statsRow:    { flexDirection:"row", gap:8, marginBottom:10 },
+  statCard:    { flex:1, backgroundColor:"#242424", borderRadius:12, padding:10, alignItems:"center", borderWidth:0.5, borderColor:"#333" },
   statMain:    { flex:1.3, borderColor:"#444" },
-  statLabel:   { fontSize:12, color:"#666", marginBottom:10, textAlign:"center" },
-  statValue:   { fontSize:28, fontWeight:"500" },
-  searchRow:   { flexDirection:"row", alignItems:"center", backgroundColor:"#242424", borderRadius:14, paddingHorizontal:16, marginBottom:14, borderWidth:0.5, borderColor:"#333", height:56 },
+  statLabel:   { fontSize:10, color:"#666", marginBottom:6, textAlign:"center" },
+  statValue:   { fontSize:20, fontWeight:"500" },
+  searchRow:   { flexDirection:"row", alignItems:"center", backgroundColor:"#242424", borderRadius:10, paddingHorizontal:12, marginBottom:8, borderWidth:0.5, borderColor:"#333", height:44 },
   searchIcon:  { fontSize:18, marginLeft:10 },
   searchInput: { flex:1, color:"#fff", fontSize:16, textAlign:"right" },
   clearBtn:    { padding:8 },
   clearTxt:    { color:"#666", fontSize:16 },
-  dropRow:     { flexDirection:"row", marginBottom:12 },
- chipsRow: { flexDirection:"row", gap:10, marginBottom:14, flexWrap:"wrap", justifyContent:"flex-end" },
-  chip:        { paddingHorizontal:18, paddingVertical:10, borderRadius:24, borderWidth:0.5, borderColor:"#333", backgroundColor:"#242424" },
+  dropRow:     { flexDirection:"row", marginBottom:8 },
+ chipsRow: { flexDirection:"row", gap:8, marginBottom:10, flexWrap:"wrap", justifyContent:"flex-end" },
+  chip:        { paddingHorizontal:14, paddingVertical:8, borderRadius:22, borderWidth:0.5, borderColor:"#333", backgroundColor:"#242424" },
   chipOn:      { borderColor:"#777", backgroundColor:"#2e2e2e" },
-  chipTxt:     { fontSize:18, color:"#666" },
+  chipTxt:     { fontSize:15, color:"#666" },
   chipTxtOn:   { color:"#fff" },
   headerRow:   { flexDirection:"row", backgroundColor:"#242424", borderTopLeftRadius:12, borderTopRightRadius:12, borderWidth:0.5, borderColor:"#333", paddingVertical:12, justifyContent:"flex-end" },
- headerCell: { fontSize:18, color:"#666", fontWeight:"500", textAlign:"center", paddingHorizontal:8, paddingVertical:12 },
-  row: { flexDirection:"row", paddingVertical:22, borderBottomWidth:0.5, borderBottomColor:"#222", backgroundColor:"#1c1c1c", alignItems:"center", justifyContent:"flex-end" },
+ headerCell: { fontSize:12, color:"#666", fontWeight:"500", textAlign:"center", paddingHorizontal:6, paddingVertical:8 },
+  row: { flexDirection:"row", paddingVertical:10, borderBottomWidth:0.5, borderBottomColor:"#222", backgroundColor:"#1c1c1c", alignItems:"center", justifyContent:"flex-end" },
   rowAlt:      { backgroundColor:"#1f1f1f" },
- cell: { fontSize:17, color:"#ccc", paddingHorizontal:8, textAlign:"center" },
-  bold: { color:"#fff", fontWeight:"500", fontSize:17 },
+ cell: { fontSize:12, color:"#ccc", paddingHorizontal:6, textAlign:"center" },
+  bold: { color:"#fff", fontWeight:"500", fontSize:13 },
   center:      { textAlign:"center" },
  cellV: { paddingHorizontal:8, justifyContent:"center", alignItems:"center" },
   icon:        { fontSize:20 },
