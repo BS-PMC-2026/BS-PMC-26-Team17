@@ -4,3 +4,4 @@ motor
 python-dotenv
 certifi
 pydantic
+httpx

@@ -109,6 +109,7 @@ export default function NavigateScreen() {
   const [simCoords, setSimCoords]       = useState<Coord | null>(null); // ← הסר כשמסיימים לבדוק
   const [polyline, setPolyline]           = useState<Coord[]>([]);
   const [displayPolyline, setDisplayPolyline] = useState<Coord[]>([]); // מה שמוצג — תמיד ref חדש
+  const [mapReady, setMapReady]         = useState(false); // האם MapView מוכן לקבל Polyline
   const [steps, setSteps]               = useState<any[]>([]);
   const [currentStep, setCurrentStep]   = useState(0);
   const [eta, setEta]                   = useState('');
@@ -282,8 +283,15 @@ export default function NavigateScreen() {
           latitude: destLat, longitude: destLng,
           latitudeDelta: 0.05, longitudeDelta: 0.05,
         }}
+        onMapReady={() => {
+          setMapReady(true);
+          // אם המסלול כבר נטען לפני שה-Map היה מוכן — כפה render חדש
+          if (polylineRef.current.length > 0) {
+            setDisplayPolyline([...polylineRef.current]);
+          }
+        }}
       >
-        {displayPolyline.length >= 2 && (
+        {mapReady && displayPolyline.length >= 2 && (
           <Polyline
             coordinates={displayPolyline}
             strokeColor="#1a73e8"
