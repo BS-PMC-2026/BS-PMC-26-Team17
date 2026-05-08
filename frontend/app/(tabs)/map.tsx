@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   View, StyleSheet, Text, ActivityIndicator,
-  TouchableOpacity, TextInput, SafeAreaView,
+  TouchableOpacity,
 } from 'react-native';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -18,13 +18,11 @@ type Pin = { latitude: number; longitude: number; name: string };
 
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
-  const [region, setRegion]                 = useState(ISRAEL_REGION);
-  const [loading, setLoading]               = useState(true);
+  const [region, setRegion]                   = useState(ISRAEL_REGION);
+  const [loading, setLoading]                 = useState(true);
   const [locationGranted, setLocationGranted] = useState(false);
-  const [userLocation, setUserLocation]     = useState<{ latitude: number; longitude: number } | null>(null);
-  const [searchQuery, setSearchQuery]       = useState('');
-  const [searching, setSearching]           = useState(false);
-  const [pin, setPin]                       = useState<Pin | null>(null); // הסמן הפעיל (חיפוש או לחיצה)
+  const [userLocation, setUserLocation]       = useState<{ latitude: number; longitude: number } | null>(null);
+  const [pin, setPin]                         = useState<Pin | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -49,38 +47,7 @@ export default function MapScreen() {
     }
   };
 
-  // ── חיפוש כתובת ────────────────────────────────────────────────────────────
-  const searchAddress = async () => {
-    if (!searchQuery.trim()) return;
-    setPin(null);
-    setSearching(true);
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchQuery)}&format=json&limit=1&countrycodes=il`,
-        { headers: { 'Accept-Language': 'he', 'User-Agent': 'ToSafePlace/1.0' } }
-      );
-      const data = await res.json();
-      if (data.length > 0) {
-        const { lat, lon, display_name } = data[0];
-        const newPin: Pin = {
-          latitude:  parseFloat(lat),
-          longitude: parseFloat(lon),
-          name:      display_name,
-        };
-        setPin(newPin);
-        mapRef.current?.animateToRegion(
-          { latitude: newPin.latitude, longitude: newPin.longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 },
-          500
-        );
-      }
-    } catch (e) {
-      console.error('Search error:', e);
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  // ── לחיצה על המפה → סמן חדש ────────────────────────────────────────────────
+  // ── לחיצה על המפה → סמן + פאנל ────────────────────────────────────────────
   const handleMapPress = (e: any) => {
     const { latitude, longitude } = e.nativeEvent.coordinate;
     setPin({
@@ -108,27 +75,6 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
-      {/* שורת חיפוש */}
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.searchRow}>
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="חפש כתובת..."
-            placeholderTextColor="#999"
-            onSubmitEditing={searchAddress}
-            returnKeyType="search"
-            textAlign="right"
-          />
-          <TouchableOpacity style={styles.searchBtn} onPress={searchAddress}>
-            {searching
-              ? <ActivityIndicator size="small" color="#fff" />
-              : <Text style={styles.searchBtnText}>🔍</Text>}
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-
       {/* מפה */}
       <MapView
         ref={mapRef}
@@ -175,41 +121,9 @@ export default function MapScreen() {
 
 const styles = StyleSheet.create({
   container:    { flex: 1 },
-  safeArea:     { backgroundColor: '#fff' },
   map:          { flex: 1 },
   center:       { flex: 1, alignItems: 'center', justifyContent: 'center' },
   loadingText:  { marginTop: 12, color: '#666' },
-
-  searchRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#fff',
-    gap: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  searchInput: {
-    flex: 1,
-    height: 42,
-    backgroundColor: '#f2f2f2',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    fontSize: 15,
-    color: '#111',
-  },
-  searchBtn: {
-    width: 42,
-    height: 42,
-    backgroundColor: '#1a73e8',
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchBtnText: { fontSize: 18 },
 
   locationButton: {
     position: 'absolute',
@@ -228,11 +142,10 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   locationButtonWithPanel: {
-    bottom: 170, // עולה כשיש פאנל
+    bottom: 170,
   },
   locationIcon: { fontSize: 22 },
 
-  // ── פאנל תחתון ──────────────────────────────────────────────────────────────
   panel: {
     position: 'absolute',
     bottom: 0,
@@ -250,12 +163,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 10,
   },
-  panelClose: {
-    position: 'absolute',
-    top: 14,
-    right: 16,
-    padding: 6,
-  },
+  panelClose:     { position: 'absolute', top: 14, right: 16, padding: 6 },
   panelCloseText: { fontSize: 18, color: '#aaa' },
   panelName: {
     fontSize: 15,
@@ -271,9 +179,5 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
   },
-  navBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  navBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });
