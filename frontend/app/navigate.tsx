@@ -47,7 +47,7 @@ export default function NavigateScreen() {
   const [distance, setDistance]               = useState('');
   const [loading, setLoading]                 = useState(isEmergency);
   const [error, setError]                     = useState('');
-  const [preview, setPreview]                 = useState<{ distanceM: number } | null>(null);
+  const [routeCache, setRouteCache]           = useState<Partial<Record<Mode, RouteResult>>>({});
 
   // ─── מיקום ראשוני ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -69,11 +69,15 @@ export default function NavigateScreen() {
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // ─── Preview: מרחק בקו ישר — מיידי, ללא רשת ─────────────────────────────
+  // ─── שליפת שלושת המסלולים במקביל ברקע ───────────────────────────────────
   useEffect(() => {
     if (!userLocation || isEmergency) return;
-    const distanceM = NavigationService.haversineM(userLocation, dest);
-    setPreview({ distanceM });
+    const modes: Mode[] = ['foot', 'cycling', 'driving'];
+    modes.forEach(m => {
+      NavigationService.fetchRoute(userLocation, dest, m)
+        .then(r => setRouteCache(prev => ({ ...prev, [m]: r })))
+        .catch(() => {});
+    });
   }, [userLocation]);
 
   // ─── Emergency: מתחיל ניווט אוטומטי ברגע שיש מיקום ─────────────────────
@@ -100,6 +104,10 @@ export default function NavigateScreen() {
   // ─── התחלת ניווט ידנית (לחיצת Start) ────────────────────────────────────
   const startNavigation = async () => {
     if (!userLocation) { setError('Waiting for location...'); return; }
+    // אם המסלול כבר נשלף ברקע — נשתמש בו מיד (ללא fetch נוסף)
+    const cached = routeCache[mode];
+    if (cached) { applyRoute(cached); return; }
+    // fallback: שליפה עכשיו
     setLoading(true);
     setError('');
     try {
@@ -172,14 +180,9 @@ export default function NavigateScreen() {
 
         <View style={s.modeCards}>
           {MODES.map(m => {
-            const etaLabel = preview
-              ? NavigationService.formatDuration(
-                  NavigationService.calculateETA(preview.distanceM, m.key)
-                )
-              : null;
-            const distLabel = preview
-              ? NavigationService.formatDistance(preview.distanceM)
-              : null;
+            const cached   = routeCache[m.key];
+            const etaLabel = cached ? cached.etaLabel  : null;
+            const distLabel = cached ? cached.distLabel : null;
             return (
               <TouchableOpacity
                 key={m.key}
