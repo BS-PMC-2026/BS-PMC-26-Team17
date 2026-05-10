@@ -7,6 +7,8 @@ import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
 
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
 const ISRAEL_REGION = {
   latitude: 31.5,
   longitude: 34.8,
@@ -15,6 +17,14 @@ const ISRAEL_REGION = {
 };
 
 type Pin = { latitude: number; longitude: number; name: string };
+type ShelterPin = {
+  latitude: number;
+  longitude: number;
+  name: string;
+  address: string;
+  accessStatus?: string;
+  isFull?: boolean;
+};
 
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
@@ -23,6 +33,58 @@ export default function MapScreen() {
   const [locationGranted, setLocationGranted] = useState(false);
   const [userLocation, setUserLocation]       = useState<{ latitude: number; longitude: number } | null>(null);
   const [pin, setPin]                         = useState<Pin | null>(null);
+  const [shelterPins, setShelterPins]         = useState<ShelterPin[]>([]);
+  const [selectedShelter, setSelectedShelter] = useState<ShelterPin | null>(null);
+
+  // טעינת מקלטים והמרת כתובות לקואורדינטות
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/shelters`);
+        const data = await res.json();
+        const shelters = data.shelters || [];
+
+        const pins: ShelterPin[] = [];
+        for (const sh of shelters) {
+          // אם כבר יש קואורדינטות בדאטהבייס - השתמש בהן
+          const lat = sh.lat ?? sh.latitude;
+          const lng = sh.lng ?? sh.longitude;
+          if (typeof lat === 'number' && typeof lng === 'number' && lat !== 0) {
+            pins.push({
+              latitude: lat,
+              longitude: lng,
+              name: sh.name || '',
+              address: sh.address || '',
+              accessStatus: sh.accessStatus,
+              isFull: sh.isFull,
+            });
+            continue;
+          }
+          // אחרת - תרגם כתובת לקואורדינטות
+          if (!sh.address) continue;
+          try {
+            const fullAddr = sh.city ? `${sh.address}, ${sh.city}` : sh.address;
+            const results = await Location.geocodeAsync(fullAddr);
+            if (results.length > 0) {
+              pins.push({
+                latitude: results[0].latitude,
+                longitude: results[0].longitude,
+                name: sh.name || '',
+                address: sh.address,
+                accessStatus: sh.accessStatus,
+                isFull: sh.isFull,
+              });
+            }
+          } catch {
+            // המשך לכתובת הבאה
+          }
+        }
+        setShelterPins(pins);
+      } catch (e) {
+        console.error('Failed to load shelters:', e);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -48,13 +110,41 @@ export default function MapScreen() {
   };
 
   // ── לחיצה על המפה → סמן + פאנל ────────────────────────────────────────────
-  const handleMapPress = (e: any) => {
+  const handleMapPress = async (e: any) => {
     const { latitude, longitude } = e.nativeEvent.coordinate;
+
+    // הצגת קואורדינטות זמנית עד שהכתובת תיטען
     setPin({
       latitude,
       longitude,
-      name: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+      name: 'טוען כתובת...',
     });
+
+    try {
+      const results = await Location.reverseGeocodeAsync({ latitude, longitude });
+      if (results.length > 0) {
+        const r = results[0];
+        // בנה כתובת קריאה: רחוב + מספר, עיר
+        const street = [r.street, r.streetNumber].filter(Boolean).join(' ');
+        const city   = r.city || r.subregion || r.region || '';
+        const address = [street, city].filter(Boolean).join(', ')
+          || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+
+        setPin({ latitude, longitude, name: address });
+      } else {
+        setPin({
+          latitude,
+          longitude,
+          name: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+        });
+      }
+    } catch {
+      setPin({
+        latitude,
+        longitude,
+        name: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+      });
+    }
   };
 
   const navigateToPin = () => {
@@ -86,11 +176,37 @@ export default function MapScreen() {
       >
         {pin && (
           <Marker
-            key={`${pin.latitude}-${pin.longitude}`}
+            key={`pin-${pin.latitude}-${pin.longitude}`}
             coordinate={{ latitude: pin.latitude, longitude: pin.longitude }}
             pinColor="#1a73e8"
           />
         )}
+
+        {/* סמני מקלטים */}
+        {shelterPins.map((sh, i) => {
+          const color = sh.isFull
+            ? '#E24B4A'
+            : sh.accessStatus === 'closed' || sh.accessStatus === 'locked'
+              ? '#888780'
+              : '#1D9E75';
+          return (
+            <Marker
+              key={`shelter-${i}-${sh.latitude}-${sh.longitude}`}
+              coordinate={{ latitude: sh.latitude, longitude: sh.longitude }}
+              pinColor={color}
+              title={sh.name}
+              description={sh.address}
+              onPress={() => {
+                setSelectedShelter(sh);
+                setPin({
+                  latitude: sh.latitude,
+                  longitude: sh.longitude,
+                  name: sh.name + (sh.address ? ` — ${sh.address}` : ''),
+                });
+              }}
+            />
+          );
+        })}
       </MapView>
 
       {/* כפתור מיקום */}

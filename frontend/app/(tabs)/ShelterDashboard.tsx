@@ -1,12 +1,14 @@
 import React, { useEffect, useState, useMemo } from "react";
 import {
   View, Text, TextInput, ScrollView, StyleSheet,
-  ActivityIndicator, TouchableOpacity, Modal, Pressable,
+  ActivityIndicator, TouchableOpacity, Modal, Pressable, Alert,
 } from "react-native";
+import { useAuth } from "@/context/auth";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 type Shelter = {
+  id?: string;
   name: string; address: string; neighborhood: string; area: string;
   placeType: string; capacity: number; accessStatus: string;
   isAccessible: boolean; isFull: boolean; hasStairs: boolean;
@@ -36,9 +38,9 @@ function Badge({ value, labels, colors }: { value:string; labels:Record<string,s
   );
 }
 const bd = StyleSheet.create({
-  wrap: { flexDirection:"row", alignItems:"center", gap:6, paddingHorizontal:14, paddingVertical:7, borderRadius:20, borderWidth:0.5, alignSelf:"flex-start" },
-  dot:  { width:7, height:7, borderRadius:4 },
-  txt:  { fontSize:16, fontWeight:"500" },
+  wrap: { flexDirection:"row", alignItems:"center", gap:4, paddingHorizontal:8, paddingVertical:4, borderRadius:14, borderWidth:0.5, alignSelf:"center" },
+  dot:  { width:6, height:6, borderRadius:3 },
+  txt:  { fontSize:12, fontWeight:"500" },
 });
 
 function Dropdown({ label, value, options, onChange, labelMap }:{
@@ -80,19 +82,20 @@ const dr = StyleSheet.create({
 });
 
 const COLS = [
-  { key:"lastReport",   heb:"דיווח אחרון",   width:260 },
-  { key:"reportType",   heb:"סוג דיווח",      width:200 },
-  { key:"cleanliness",  heb:"סטטוס ניקיון",  width:210 },
-  { key:"accessStatus", heb:"סטטוס תפעולי",  width:210 },
-  { key:"isFull",       heb:"עומס",           width:180 },
-  { key:"shouldBeOpen", heb:"מצב נדרש",       width:190 },
-  { key:"capacity",     heb:"קיבולת",         width:160 },
-  { key:"neighborhood", heb:"שכונה",          width:200 },
-  { key:"address",      heb:"כתובת",          width:280 },
-  { key:"name",         heb:"שם המקלט",       width:300 },
+  { key:"lastReport",   heb:"דיווח אחרון",   width:110 },
+  { key:"reportType",   heb:"סוג דיווח",      width:95  },
+  { key:"cleanliness",  heb:"ניקיון",         width:100 },
+  { key:"accessStatus", heb:"סטטוס",          width:100 },
+  { key:"isFull",       heb:"עומס",           width:90  },
+  { key:"shouldBeOpen", heb:"מצב נדרש",       width:85  },
+  { key:"capacity",     heb:"קיבולת",         width:75  },
+  { key:"neighborhood", heb:"שכונה",          width:110 },
+  { key:"address",      heb:"כתובת",          width:160 },
+  { key:"name",         heb:"שם המקלט",       width:170 },
 ];
+const TOTAL_W = COLS.reduce((sum,c)=>sum+c.width, 0);
 
-const ROW_H = 80;
+const ROW_H = 72;
 
 function timeAgo(dateStr: string): string {
   if (!dateStr) return "—";
@@ -107,6 +110,8 @@ function timeAgo(dateStr: string): string {
 }
 
 export default function ShelterDashboard() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [shelters, setShelters] = useState<Shelter[]>([]);
   const [loading,  setLoading ] = useState(true);
   const [search,   setSearch  ] = useState("");
@@ -114,6 +119,61 @@ export default function ShelterDashboard() {
   const [area,     setArea    ] = useState("כל האזורים");
   const [type,     setType    ] = useState("כל הסוגים");
   const [chip,     setChip    ] = useState("הכול");
+  const [showAdd,  setShowAdd ] = useState(false);
+  const [newShelter, setNewShelter] = useState({
+    name:"", address:"", neighborhood:"", area:"", capacity:"",
+  });
+
+  const handleAdd = async () => {
+    if (!newShelter.name || !newShelter.address) {
+      Alert.alert("שגיאה", "שם וכתובת חובה");
+      return;
+    }
+    try {
+      const res = await fetch(`${API_URL}/shelters`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({
+          user_id: user?.id,
+          name: newShelter.name,
+          address: newShelter.address,
+          neighborhood: newShelter.neighborhood,
+          area: newShelter.area,
+          capacity: parseInt(newShelter.capacity) || 0,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        Alert.alert("שגיאה", err.detail || "הוספה נכשלה");
+        return;
+      }
+      Alert.alert("נוסף", "מקלט נוסף בהצלחה");
+      setShowAdd(false);
+      setNewShelter({ name:"", address:"", neighborhood:"", area:"", capacity:"" });
+      load();
+    } catch {
+      Alert.alert("שגיאה", "תקלה בחיבור לשרת");
+    }
+  };
+
+  const handleDelete = (shelter: Shelter) => {
+    Alert.alert("מחיקה", `למחוק את ${shelter.name}?`, [
+      { text:"ביטול", style:"cancel" },
+      { text:"מחק", style:"destructive", onPress: async () => {
+        try {
+          const res = await fetch(`${API_URL}/shelters/${shelter.id}?user_id=${user?.id}`, { method:"DELETE" });
+          if (!res.ok) {
+            const err = await res.json();
+            Alert.alert("שגיאה", err.detail || "מחיקה נכשלה");
+            return;
+          }
+          load();
+        } catch {
+          Alert.alert("שגיאה", "תקלה בחיבור לשרת");
+        }
+      }},
+    ]);
+  };
 
   const load = async () => {
     try {
@@ -170,6 +230,13 @@ export default function ShelterDashboard() {
         ))}
       </View>
 
+      {/* כפתור הוספה לאדמין */}
+      {isAdmin && (
+        <TouchableOpacity style={s.addBtn} onPress={() => setShowAdd(true)}>
+          <Text style={s.addBtnTxt}>+ הוסף מקלט</Text>
+        </TouchableOpacity>
+      )}
+
       {/* חיפוש */}
       <View style={s.searchRow}>
         <Text style={s.searchIcon}>🔍</Text>
@@ -209,23 +276,28 @@ export default function ShelterDashboard() {
       {loading ? (
         <ActivityIndicator style={{marginTop:40}} color="#378ADD"/>
       ) : (
-        <ScrollView horizontal={false} showsHorizontalScrollIndicator={false} style={{flex:1}}>
-          <View style={{flex:1}}>
+        <ScrollView horizontal showsHorizontalScrollIndicator style={{flex:1}}>
+          <View style={{width: TOTAL_W + (isAdmin ? 50 : 0)}}>
             {/* כותרות */}
-            <ScrollView horizontal showsHorizontalScrollIndicator style={{flex:1}}></ScrollView>
-            <View style={s.headerRow}>
+            <View style={[s.headerRow, {width: TOTAL_W + (isAdmin ? 50 : 0)}]}>
+              {isAdmin && <View style={{width:50}} />}
               {COLS.map(c => (
                 <Text key={c.key} style={[s.headerCell, {width:c.width}]}>{c.heb}</Text>
               ))}
             </View>
             {/* שורות */}
-          <ScrollView style={{height: ROW_H * 6}}>
+          <ScrollView style={{height: ROW_H * 6}} nestedScrollEnabled>
               {filtered.length === 0
                 ? <Text style={s.empty}>לא נמצאו מקלטים</Text>
                 : filtered.map((item, i) => (
-                  <View key={i} style={[s.row, i%2===0 && s.rowAlt, {minHeight:ROW_H}]}>
+                  <View key={i} style={[s.row, i%2===0 && s.rowAlt, {minHeight:ROW_H, width: TOTAL_W + (isAdmin ? 50 : 0)}]}>
 
-                
+                  {/* כפתור מחיקה לאדמין */}
+                  {isAdmin && (
+                    <TouchableOpacity style={s.delBtn} onPress={() => handleDelete(item)}>
+                      <Text style={s.delTxt}>🗑</Text>
+                    </TouchableOpacity>
+                  )}
 
                   {/* דיווח אחרון */}
 <View style={[s.cellV, {width:COLS[0].width}]}>
@@ -280,12 +352,12 @@ export default function ShelterDashboard() {
 
                    {/* שם */}
                     <View style={[s.cellV, {width:COLS[9].width}]}>
-                    <Text style={[s.bold, {fontSize:18, color:"#fff", textAlign:"right", paddingHorizontal:14}]} numberOfLines={1}>
+                    <Text style={[s.bold, {color:"#fff", textAlign:"right", paddingHorizontal:8}]} numberOfLines={1}>
     {item.name}
   </Text>
-  <View style={{flexDirection:"row", gap:6, paddingHorizontal:14, marginTop:4, justifyContent:"flex-end"}}>
-    {item.isAccessible && !item.hasStairs && <Text style={{fontSize:26}}>♿</Text>}
-    {!item.petIssueReported               && <Text style={{fontSize:26}}>🐾</Text>}
+  <View style={{flexDirection:"row", gap:4, paddingHorizontal:8, marginTop:2, justifyContent:"flex-end"}}>
+    {item.isAccessible && !item.hasStairs && <Text style={{fontSize:14}}>♿</Text>}
+    {!item.petIssueReported               && <Text style={{fontSize:14}}>🐾</Text>}
   </View>
 </View>
 
@@ -299,6 +371,34 @@ export default function ShelterDashboard() {
 
       {/* ספירה למטה */}
       <Text style={s.countLabel}>מציג {filtered.length} מקלטים</Text>
+
+      {/* מודל הוספה */}
+      <Modal transparent visible={showAdd} animationType="slide" onRequestClose={() => setShowAdd(false)}>
+        <Pressable style={s.modalOverlay} onPress={() => setShowAdd(false)}>
+          <Pressable style={s.modalCard} onPress={(e)=>e.stopPropagation()}>
+            <Text style={s.modalTitle}>הוספת מקלט חדש</Text>
+            <TextInput style={s.modalInput} placeholder="שם המקלט" placeholderTextColor="#666"
+              value={newShelter.name} onChangeText={t => setNewShelter({...newShelter, name:t})} />
+            <TextInput style={s.modalInput} placeholder="כתובת" placeholderTextColor="#666"
+              value={newShelter.address} onChangeText={t => setNewShelter({...newShelter, address:t})} />
+            <TextInput style={s.modalInput} placeholder="שכונה" placeholderTextColor="#666"
+              value={newShelter.neighborhood} onChangeText={t => setNewShelter({...newShelter, neighborhood:t})} />
+            <TextInput style={s.modalInput} placeholder="אזור" placeholderTextColor="#666"
+              value={newShelter.area} onChangeText={t => setNewShelter({...newShelter, area:t})} />
+            <TextInput style={s.modalInput} placeholder="קיבולת" placeholderTextColor="#666"
+              keyboardType="numeric"
+              value={newShelter.capacity} onChangeText={t => setNewShelter({...newShelter, capacity:t})} />
+            <View style={{flexDirection:"row", gap:10, marginTop:10}}>
+              <TouchableOpacity style={[s.modalBtn, {backgroundColor:"#1D9E75"}]} onPress={handleAdd}>
+                <Text style={s.modalBtnTxt}>הוסף</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.modalBtn, {backgroundColor:"#444"}]} onPress={() => setShowAdd(false)}>
+                <Text style={s.modalBtnTxt}>ביטול</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
     </View>
   );
@@ -323,14 +423,24 @@ const s = StyleSheet.create({
   chipTxt:     { fontSize:18, color:"#666" },
   chipTxtOn:   { color:"#fff" },
   headerRow:   { flexDirection:"row", backgroundColor:"#242424", borderTopLeftRadius:12, borderTopRightRadius:12, borderWidth:0.5, borderColor:"#333", paddingVertical:12, justifyContent:"flex-end" },
- headerCell: { fontSize:18, color:"#666", fontWeight:"500", textAlign:"center", paddingHorizontal:8, paddingVertical:12 },
-  row: { flexDirection:"row", paddingVertical:22, borderBottomWidth:0.5, borderBottomColor:"#222", backgroundColor:"#1c1c1c", alignItems:"center", justifyContent:"flex-end" },
+ headerCell: { fontSize:13, color:"#888", fontWeight:"500", textAlign:"center", paddingHorizontal:4, paddingVertical:10 },
+  row: { flexDirection:"row", paddingVertical:10, borderBottomWidth:0.5, borderBottomColor:"#222", backgroundColor:"#1c1c1c", alignItems:"center" },
   rowAlt:      { backgroundColor:"#1f1f1f" },
- cell: { fontSize:17, color:"#ccc", paddingHorizontal:8, textAlign:"center" },
-  bold: { color:"#fff", fontWeight:"500", fontSize:17 },
+ cell: { fontSize:13, color:"#ccc", paddingHorizontal:4, textAlign:"center" },
+  bold: { color:"#fff", fontWeight:"500", fontSize:14 },
   center:      { textAlign:"center" },
  cellV: { paddingHorizontal:8, justifyContent:"center", alignItems:"center" },
   icon:        { fontSize:20 },
   empty:       { color:"#666", textAlign:"center", padding:40, fontSize:16 },
   countLabel:  { fontSize:13, color:"#555", textAlign:"right", marginTop:12 },
+  addBtn:      { backgroundColor:"#1D9E75", paddingVertical:12, borderRadius:10, alignItems:"center", marginBottom:12 },
+  addBtnTxt:   { color:"#fff", fontWeight:"600", fontSize:16 },
+  delBtn:      { width:50, alignItems:"center", justifyContent:"center" },
+  delTxt:      { fontSize:18 },
+  modalOverlay:{ flex:1, backgroundColor:"#000000aa", justifyContent:"center", padding:24 },
+  modalCard:   { backgroundColor:"#242424", borderRadius:16, padding:20, borderWidth:0.5, borderColor:"#3a3a3a" },
+  modalTitle:  { color:"#fff", fontSize:18, fontWeight:"600", marginBottom:14, textAlign:"right" },
+  modalInput:  { backgroundColor:"#1c1c1c", color:"#fff", borderRadius:8, paddingHorizontal:12, paddingVertical:10, marginBottom:10, fontSize:15, textAlign:"right", borderWidth:0.5, borderColor:"#333" },
+  modalBtn:    { flex:1, paddingVertical:12, borderRadius:8, alignItems:"center" },
+  modalBtnTxt: { color:"#fff", fontWeight:"600", fontSize:15 },
 });

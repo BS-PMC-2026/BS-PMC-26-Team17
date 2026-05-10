@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
 import axios from 'axios';
 export default function HomeScreen() {
+  const { user, logout } = useAuth();
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -15,7 +15,7 @@ export default function HomeScreen() {
         setLoading(false);
       })
       .catch(() => {
-        setError('❌ Cannot connect to API');
+        setError('❌ Cannot connect to API');// for chekcing if API is working
         setLoading(false);
       });
   }, []);
@@ -28,11 +28,17 @@ export default function HomeScreen() {
       {message ? <Text style={styles.success}>✅ {message}</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
+      {user && (
+        <Text style={{ marginTop: 16, fontSize: 16, color: '#444' }}>
+          Hello, {user.name} 👋
+        </Text>
+      )}
+
       <TouchableOpacity
-        style={styles.button}
-        onPress={() => router.replace('/login' as never)}
+        style={[styles.button, { backgroundColor: '#e24b4a' }]}
+        onPress={() => logout()}
       >
-        <Text style={styles.buttonText}>Go to Login</Text>
+        <Text style={styles.buttonText}>Logout</Text>
       </TouchableOpacity>
     </View>
   );
