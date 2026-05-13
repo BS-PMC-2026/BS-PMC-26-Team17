@@ -71,17 +71,3 @@ jobs:
       - name: Run frontend tests
         working-directory: frontend
         run: npm test -- --watchAll=false
-
-      - name: Zip web bundle
-        run: |
-          mkdir -p dist
-          cd frontend/web-build
-          zip -r ../../dist/tosafeplace-${{ github.sha }}.zip .
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tosafeplace-bundle-${{ github.run_number }}-${{ github.sha }}
-          path: dist/tosafeplace-${{ github.sha }}.zip
-          if-no-files-found: error
-          retention-days: 14
