@@ -384,6 +384,20 @@ def run_sync():
                     matched = shelters_by_street.get(street)
 
             if matched:
+                # address — street name from Shelters collection + house number from Google Maps
+                matched_street = _street_only(matched.get("address", "").strip())
+                google_house   = ""
+                if address:
+                    # extract just the house number from Google Maps result
+                    import re
+                    m = re.search(r'\b(\d[\d,\-/]*)\s*$', address)
+                    if m:
+                        google_house = m.group(1)
+                if matched_street:
+                    combined = " ".join(p for p in [matched_street, google_house] if p)
+                    track("address", shelter.address, combined)
+                    shelter.address = combined
+
                 # Fields where Shelters collection always wins (overrides Overpass/defaults)
                 ALWAYS_OVERRIDE = ["placeType", "isAccessible"]
                 SHELTER_FIELDS = [
