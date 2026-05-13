@@ -69,7 +69,7 @@ export default function NavigateScreen() {
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // ─── שליפת שלושת המסלולים במקביל ברקע ───────────────────────────────────
+  // שליפת שלושת המסלולים במקביל ברקע 
   useEffect(() => {
     if (!userLocation || isEmergency) return;
     const modes: Mode[] = ['foot', 'cycling', 'driving'];
@@ -162,9 +162,7 @@ export default function NavigateScreen() {
 
   const arrived = steps[currentStep]?.maneuver?.type === 'arrive';
 
-  // ═══════════════════════════════════════════════════════════════════════════
   // מסך בחירת מצב נסיעה
-  // ═══════════════════════════════════════════════════════════════════════════
   if (phase === 'select') {
     return (
       <SafeAreaView style={s.container}>
@@ -223,9 +221,7 @@ export default function NavigateScreen() {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
   // מסך ניווט
-  // ═══════════════════════════════════════════════════════════════════════════
   return (
     <SafeAreaView style={s.container}>
       <View style={s.header}>
