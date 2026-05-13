@@ -50,6 +50,14 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="gearshape.fill" color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="AddShelter"
+        options={{
+          title: 'Add Shelter',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="plus.circle.fill" color={color} />,
+          href: isAdmin ? undefined : null,
+        }}
+      />
     </Tabs>
   );
 }
