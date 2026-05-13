@@ -31,15 +31,15 @@ export default function AddShelterScreen() {
   if (!isAdmin) {
     return (
       <View style={styles.deniedWrap}>
-        <Text style={styles.deniedTitle}>🚫 גישה נדחתה</Text>
-        <Text style={styles.deniedTxt}>הדף הזה זמין רק למנהלים</Text>
+        <Text style={styles.deniedTitle}>🚫 Access Denied</Text>
+        <Text style={styles.deniedTxt}>This page is available to admins only</Text>
       </View>
     );
   }
 
   const handleSubmit = async () => {
     if (!name.trim() || !address.trim()) {
-      Alert.alert('שגיאה', 'שם וכתובת הם שדות חובה');
+      Alert.alert('Error', 'Name and address are required');
       return;
     }
     setLoading(true);
@@ -64,14 +64,14 @@ export default function AddShelterScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
-        Alert.alert('שגיאה', data.detail || 'הוספה נכשלה');
+        Alert.alert('Error', data.detail || 'Failed to add shelter');
         return;
       }
-      Alert.alert('הצלחה', 'המקלט נוסף למסד הנתונים', [
+      Alert.alert('Success', 'Shelter added to database', [
         {
-          text: 'אישור',
+          text: 'OK',
           onPress: () => {
-            // ניקוי טופס וחזרה לדאשבורד
+            // clear form and return to dashboard
             setName(''); setAddress(''); setNeighborhood(''); setArea('');
             setCapacity(''); setPlaceType('public shelter');
             setAccessStatus('open'); setIsAccessible(false);
@@ -81,7 +81,7 @@ export default function AddShelterScreen() {
         },
       ]);
     } catch {
-      Alert.alert('שגיאה', 'תקלה בחיבור לשרת');
+      Alert.alert('Error', 'Failed to connect to server');
     } finally {
       setLoading(false);
     }
@@ -89,36 +89,36 @@ export default function AddShelterScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Text style={styles.header}>הוספת מקלט חדש</Text>
-      <Text style={styles.subHeader}>מילוי הפרטים יוסיף את המקלט למסד הנתונים</Text>
+      <Text style={styles.header}>Add New Shelter</Text>
+      <Text style={styles.subHeader}>Fill in the details to add the shelter to the database</Text>
 
-      {/* שם */}
-      <Text style={styles.label}>שם המקלט *</Text>
-      <TextInput style={styles.input} placeholder="לדוגמה: מקלט רחוב הרצל"
+      {/* Name */}
+      <Text style={styles.label}>Shelter Name *</Text>
+      <TextInput style={styles.input} placeholder="e.g., Herzl St. Shelter"
         placeholderTextColor="#666" value={name} onChangeText={setName} />
 
-      {/* כתובת */}
-      <Text style={styles.label}>כתובת *</Text>
-      <TextInput style={styles.input} placeholder="רחוב ומספר"
+      {/* Address */}
+      <Text style={styles.label}>Address *</Text>
+      <TextInput style={styles.input} placeholder="Street and number"
         placeholderTextColor="#666" value={address} onChangeText={setAddress} />
 
-      {/* שכונה */}
-      <Text style={styles.label}>שכונה</Text>
-      <TextInput style={styles.input} placeholder="שם השכונה"
+      {/* Neighborhood */}
+      <Text style={styles.label}>Neighborhood</Text>
+      <TextInput style={styles.input} placeholder="Neighborhood name"
         placeholderTextColor="#666" value={neighborhood} onChangeText={setNeighborhood} />
 
-      {/* אזור */}
-      <Text style={styles.label}>אזור</Text>
-      <TextInput style={styles.input} placeholder="צפון / דרום / מזרח / מערב"
+      {/* Area */}
+      <Text style={styles.label}>Area</Text>
+      <TextInput style={styles.input} placeholder="North / South / East / West"
         placeholderTextColor="#666" value={area} onChangeText={setArea} />
 
-      {/* עיר */}
-      <Text style={styles.label}>עיר</Text>
-      <TextInput style={styles.input} placeholder="עיר"
+      {/* City */}
+      <Text style={styles.label}>City</Text>
+      <TextInput style={styles.input} placeholder="City"
         placeholderTextColor="#666" value={city} onChangeText={setCity} />
 
-      {/* סוג מקום */}
-      <Text style={styles.label}>סוג מקום</Text>
+      {/* Place type */}
+      <Text style={styles.label}>Place Type</Text>
       <View style={styles.row}>
         {PLACE_TYPES.map(t => (
           <TouchableOpacity key={t}
@@ -129,14 +129,14 @@ export default function AddShelterScreen() {
         ))}
       </View>
 
-      {/* קיבולת */}
-      <Text style={styles.label}>קיבולת</Text>
-      <TextInput style={styles.input} placeholder="מספר אנשים"
+      {/* Capacity */}
+      <Text style={styles.label}>Capacity</Text>
+      <TextInput style={styles.input} placeholder="Number of people"
         placeholderTextColor="#666" keyboardType="numeric"
         value={capacity} onChangeText={setCapacity} />
 
-      {/* סטטוס גישה */}
-      <Text style={styles.label}>סטטוס גישה</Text>
+      {/* Access status */}
+      <Text style={styles.label}>Access Status</Text>
       <View style={styles.row}>
         {ACCESS_STATUSES.map(s => (
           <TouchableOpacity key={s}
@@ -147,25 +147,25 @@ export default function AddShelterScreen() {
         ))}
       </View>
 
-      {/* מתגים */}
+      {/* Switches */}
       <View style={styles.switchRow}>
-        <Text style={styles.switchLabel}>נגיש לנכים ♿</Text>
+        <Text style={styles.switchLabel}>Wheelchair Accessible ♿</Text>
         <Switch value={isAccessible} onValueChange={setIsAccessible} />
       </View>
       <View style={styles.switchRow}>
-        <Text style={styles.switchLabel}>יש מדרגות</Text>
+        <Text style={styles.switchLabel}>Has Stairs</Text>
         <Switch value={hasStairs} onValueChange={setHasStairs} />
       </View>
       <View style={styles.switchRow}>
-        <Text style={styles.switchLabel}>בעיית חיות מחמד 🐾</Text>
+        <Text style={styles.switchLabel}>Pet Issue Reported 🐾</Text>
         <Switch value={petIssueReported} onValueChange={setPetIssueReported} />
       </View>
 
-      {/* כפתור הוספה */}
+      {/* Submit button */}
       <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit} disabled={loading}>
         {loading
           ? <ActivityIndicator color="#fff" />
-          : <Text style={styles.submitTxt}>+ הוסף מקלט למסד הנתונים</Text>}
+          : <Text style={styles.submitTxt}>+ Add Shelter to Database</Text>}
       </TouchableOpacity>
 
       <View style={{ height: 40 }} />
@@ -176,11 +176,11 @@ export default function AddShelterScreen() {
 const styles = StyleSheet.create({
   container:    { flex: 1, backgroundColor: '#181818' },
   content:      { padding: 20 },
-  header:       { fontSize: 26, fontWeight: '700', color: '#fff', textAlign: 'right', marginBottom: 4 },
-  subHeader:    { fontSize: 13, color: '#888', textAlign: 'right', marginBottom: 22 },
-  label:        { fontSize: 14, color: '#bbb', textAlign: 'right', marginBottom: 6, marginTop: 12 },
-  input:        { backgroundColor: '#242424', color: '#fff', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, borderWidth: 0.5, borderColor: '#333', textAlign: 'right' },
-  row:          { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' },
+  header:       { fontSize: 26, fontWeight: '700', color: '#fff', textAlign: 'left', marginBottom: 4 },
+  subHeader:    { fontSize: 13, color: '#888', textAlign: 'left', marginBottom: 22 },
+  label:        { fontSize: 14, color: '#bbb', textAlign: 'left', marginBottom: 6, marginTop: 12 },
+  input:        { backgroundColor: '#242424', color: '#fff', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, borderWidth: 0.5, borderColor: '#333', textAlign: 'left' },
+  row:          { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-start' },
   chip:         { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 0.5, borderColor: '#333', backgroundColor: '#242424' },
   chipOn:       { borderColor: '#1D9E75', backgroundColor: '#1D9E7522' },
   chipTxt:      { fontSize: 13, color: '#888' },

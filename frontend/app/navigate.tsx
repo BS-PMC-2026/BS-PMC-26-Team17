@@ -36,7 +36,7 @@ export default function NavigateScreen() {
   const recalcCooldown = useRef(false);
 
   const [phase, setPhase]                     = useState<'select' | 'navigating'>(
-    isEmergency ? 'navigating' : 'select'   // emergency → ישר לניווט
+    isEmergency ? 'navigating' : 'select'   // emergency → straight to navigation
   );
   const [mode, setMode]                       = useState<Mode>('foot');
   const [userLocation, setUserLocation]       = useState<Coord | null>(null);
@@ -49,19 +49,19 @@ export default function NavigateScreen() {
   const [error, setError]                     = useState('');
   const [routeCache, setRouteCache]           = useState<Partial<Record<Mode, RouteResult>>>({});
 
-  // ─── מיקום ראשוני ─────────────────────────────────────────────────────────
+  // ─── Initial location ─────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') { setError('Location permission needed'); return; }
 
-      // getLastKnownPositionAsync → מיידי (cache מהמפה), מספיק לpreview
+      // getLastKnownPositionAsync → instant (cache from map), enough for preview
       const last = await Location.getLastKnownPositionAsync();
       if (last) {
         setUserLocation({ latitude: last.coords.latitude, longitude: last.coords.longitude });
       }
 
-      // getCurrentPositionAsync → מדויק יותר, לניווט ממש
+      // getCurrentPositionAsync → more accurate, for actual navigation
       const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       setUserLocation({ latitude: fresh.coords.latitude, longitude: fresh.coords.longitude });
     })();
@@ -69,7 +69,7 @@ export default function NavigateScreen() {
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // שליפת שלושת המסלולים במקביל ברקע 
+  // Fetch all three routes in parallel in the background
   useEffect(() => {
     if (!userLocation || isEmergency) return;
     const modes: Mode[] = ['foot', 'cycling', 'driving'];
@@ -80,7 +80,7 @@ export default function NavigateScreen() {
     });
   }, [userLocation]);
 
-  // ─── Emergency: מתחיל ניווט אוטומטי ברגע שיש מיקום ─────────────────────
+  // ─── Emergency: auto-start navigation as soon as location is available ─
   useEffect(() => {
     if (!isEmergency || !userLocation) return;
     NavigationService.emergencyRoute(userLocation, dest)
@@ -89,7 +89,7 @@ export default function NavigateScreen() {
       .finally(() => setLoading(false));
   }, [isEmergency, userLocation]);
 
-  // ─── מיישם RouteResult על ה-state ─────────────────────────────────────────
+  // ─── Apply RouteResult to state ─────────────────────────────────────────
   function applyRoute(result: RouteResult) {
     polylineRef.current = result.polyline;
     stepsRef.current    = result.steps;
@@ -101,13 +101,13 @@ export default function NavigateScreen() {
     setPhase('navigating');
   }
 
-  // ─── התחלת ניווט ידנית (לחיצת Start) ────────────────────────────────────
+  // ─── Manual navigation start (Start button) ─────────────────────────
   const startNavigation = async () => {
     if (!userLocation) { setError('Waiting for location...'); return; }
-    // אם המסלול כבר נשלף ברקע — נשתמש בו מיד (ללא fetch נוסף)
+    // If route was already fetched in background — use it immediately (no extra fetch)
     const cached = routeCache[mode];
     if (cached) { applyRoute(cached); return; }
-    // fallback: שליפה עכשיו
+    // fallback: fetch now
     setLoading(true);
     setError('');
     try {
@@ -120,7 +120,7 @@ export default function NavigateScreen() {
     }
   };
 
-  // ─── GPS watch — מתחיל רק כשניווט פעיל ──────────────────────────────────
+  // ─── GPS watch — only starts when navigation is active ───────────────
   useEffect(() => {
     if (phase !== 'navigating') return;
     Location.watchPositionAsync(
@@ -136,7 +136,7 @@ export default function NavigateScreen() {
     return () => { watchRef.current?.remove(); };
   }, [phase]);
 
-  // ─── עדכון מיקום בזמן ניווט ──────────────────────────────────────────────
+  // ─── Update location during navigation ────────────────────────────────
   function advanceOnRoute(pos: Coord) {
     if (stepsRef.current.length > 0) {
       setCurrentStep(NavigationService.nearestStepIndex(stepsRef.current, pos));
@@ -150,7 +150,7 @@ export default function NavigateScreen() {
         NavigationService.calculateETA(distanceM, modeRef.current)
       ));
 
-      // סטייה מהמסלול → חישוב מחדש
+      // Off-route → recalculate
       if (!recalcCooldown.current &&
           NavigationService.isOffRoute(pos, polylineRef.current)) {
         recalcCooldown.current = true;
@@ -162,7 +162,7 @@ export default function NavigateScreen() {
 
   const arrived = steps[currentStep]?.maneuver?.type === 'arrive';
 
-  // מסך בחירת מצב נסיעה
+  // Mode selection screen
   if (phase === 'select') {
     return (
       <SafeAreaView style={s.container}>
@@ -221,7 +221,7 @@ export default function NavigateScreen() {
     );
   }
 
-  // מסך ניווט
+  // Navigation screen
   return (
     <SafeAreaView style={s.container}>
       <View style={s.header}>

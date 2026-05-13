@@ -36,7 +36,7 @@ export default function MapScreen() {
   const [shelterPins, setShelterPins]         = useState<ShelterPin[]>([]);
   const [selectedShelter, setSelectedShelter] = useState<ShelterPin | null>(null);
 
-  // טעינת מקלטים והמרת כתובות לקואורדינטות
+  // Load shelters and convert addresses to coordinates
   useEffect(() => {
     (async () => {
       try {
@@ -46,7 +46,7 @@ export default function MapScreen() {
 
         const pins: ShelterPin[] = [];
         for (const sh of shelters) {
-          // אם כבר יש קואורדינטות בדאטהבייס - השתמש בהן
+          // If coordinates already exist in the database, use them
           const lat = sh.lat ?? sh.latitude;
           const lng = sh.lng ?? sh.longitude;
           if (typeof lat === 'number' && typeof lng === 'number' && lat !== 0) {
@@ -60,7 +60,7 @@ export default function MapScreen() {
             });
             continue;
           }
-          // אחרת - תרגם כתובת לקואורדינטות
+          // Otherwise - convert address to coordinates
           if (!sh.address) continue;
           try {
             const fullAddr = sh.city ? `${sh.address}, ${sh.city}` : sh.address;
@@ -76,7 +76,7 @@ export default function MapScreen() {
               });
             }
           } catch {
-            // המשך לכתובת הבאה
+            // continue to next address
           }
         }
         setShelterPins(pins);
@@ -109,22 +109,22 @@ export default function MapScreen() {
     }
   };
 
-  // ── לחיצה על המפה → סמן + פאנל ────────────────────────────────────────────
+  // ── Map tap → marker + panel ─────────────────────────────────────────
   const handleMapPress = async (e: any) => {
     const { latitude, longitude } = e.nativeEvent.coordinate;
 
-    // הצגת קואורדינטות זמנית עד שהכתובת תיטען
+    // Show coordinates temporarily until address resolves
     setPin({
       latitude,
       longitude,
-      name: 'טוען כתובת...',
+      name: 'Loading address...',
     });
 
     try {
       const results = await Location.reverseGeocodeAsync({ latitude, longitude });
       if (results.length > 0) {
         const r = results[0];
-        // בנה כתובת קריאה: רחוב + מספר, עיר
+        // Build readable address: street + number, city
         const street = [r.street, r.streetNumber].filter(Boolean).join(' ');
         const city   = r.city || r.subregion || r.region || '';
         const address = [street, city].filter(Boolean).join(', ')
@@ -158,14 +158,14 @@ export default function MapScreen() {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#1a73e8" />
-        <Text style={styles.loadingText}>מאתר מיקום...</Text>
+        <Text style={styles.loadingText}>Locating...</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      {/* מפה */}
+      {/* Map */}
       <MapView
         ref={mapRef}
         style={styles.map}
@@ -182,7 +182,7 @@ export default function MapScreen() {
           />
         )}
 
-        {/* סמני מקלטים */}
+        {/* Shelter markers */}
         {shelterPins.map((sh, i) => {
           const color = sh.isFull
             ? '#E24B4A'
@@ -209,7 +209,7 @@ export default function MapScreen() {
         })}
       </MapView>
 
-      {/* כפתור מיקום */}
+      {/* Location button */}
       {locationGranted && (
         <TouchableOpacity
           style={[styles.locationButton, pin ? styles.locationButtonWithPanel : null]}
@@ -219,7 +219,7 @@ export default function MapScreen() {
         </TouchableOpacity>
       )}
 
-      {/* פאנל תחתון */}
+      {/* Bottom panel */}
       {pin && (
         <View style={styles.panel}>
           <TouchableOpacity style={styles.panelClose} onPress={() => setPin(null)}>
@@ -227,7 +227,7 @@ export default function MapScreen() {
           </TouchableOpacity>
           <Text style={styles.panelName} numberOfLines={2}>{pin.name}</Text>
           <TouchableOpacity style={styles.navBtn} onPress={navigateToPin}>
-            <Text style={styles.navBtnText}>🧭  נווט לכאן</Text>
+            <Text style={styles.navBtnText}>🧭  Navigate Here</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -286,8 +286,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#222',
     marginBottom: 16,
-    marginRight: 32,
-    textAlign: 'right',
+    marginLeft: 32,
+    textAlign: 'left',
   },
   navBtn: {
     backgroundColor: '#1a73e8',
