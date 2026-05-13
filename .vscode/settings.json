@@ -30,6 +30,17 @@
         }
     },
 
+    // 2b. Same protection for TypeScript/TSX — prevent @types/node identifiers
+    //     from being auto-suggested when typing in JSX (e.g., "AddShelter" → "Add\"assert\"...")
+    "[typescript]": {
+        "editor.suggest.showWords": false,
+        "editor.wordBasedSuggestions": "off"
+    },
+    "[typescriptreact]": {
+        "editor.suggest.showWords": false,
+        "editor.wordBasedSuggestions": "off"
+    },
+
     // 3. Hide node_modules and TS build output from TS language server
     //    so it never offers @types/node identifiers inside the project
     "typescript.tsserver.exclude": [

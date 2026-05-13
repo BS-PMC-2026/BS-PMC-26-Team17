@@ -101,13 +101,13 @@ export default function NavigateScreen() {
     setPhase('navigating');
   }
 
-  // ─── Manual navigation start (Start button) ─────────────────────────
+  // ─── התחלת ניווט ידנית (לחיצת Start) ────────────────────────────────────
   const startNavigation = async () => {
     if (!userLocation) { setError('Waiting for location...'); return; }
-    // If route was already fetched in background — use it immediately (no extra fetch)
+    // אם המסלול כבר נשלף ברקע — נשתמש בו מיד (ללא fetch נוסף)
     const cached = routeCache[mode];
     if (cached) { applyRoute(cached); return; }
-    // fallback: fetch now
+    // fallback: שליפה עכשיו
     setLoading(true);
     setError('');
     try {
@@ -120,9 +120,10 @@ export default function NavigateScreen() {
     }
   };
 
-  // ─── GPS watch — only starts when navigation is active ───────────────
+  // ─── GPS watch — starts only when navigating, safely cleaned on unmount ─
   useEffect(() => {
     if (phase !== 'navigating') return;
+    let cancelled = false;
     Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, distanceInterval: 10 },
       (loc) => {
@@ -132,11 +133,19 @@ export default function NavigateScreen() {
         );
         advanceOnRoute(coords);
       }
-    ).then(sub => { watchRef.current = sub; });
-    return () => { watchRef.current?.remove(); };
+    ).then(sub => {
+      // If unmounted before subscription was created, cancel immediately
+      if (cancelled) { sub.remove(); return; }
+      watchRef.current = sub;
+    });
+    return () => {
+      cancelled = true;
+      watchRef.current?.remove();
+      watchRef.current = null;
+    };
   }, [phase]);
 
-  // ─── Update location during navigation ────────────────────────────────
+  // ─── עדכון מיקום בזמן ניווט ──────────────────────────────────────────────
   function advanceOnRoute(pos: Coord) {
     if (stepsRef.current.length > 0) {
       setCurrentStep(NavigationService.nearestStepIndex(stepsRef.current, pos));
@@ -150,7 +159,7 @@ export default function NavigateScreen() {
         NavigationService.calculateETA(distanceM, modeRef.current)
       ));
 
-      // Off-route → recalculate
+      // סטייה מהמסלול → חישוב מחדש
       if (!recalcCooldown.current &&
           NavigationService.isOffRoute(pos, polylineRef.current)) {
         recalcCooldown.current = true;
@@ -162,7 +171,7 @@ export default function NavigateScreen() {
 
   const arrived = steps[currentStep]?.maneuver?.type === 'arrive';
 
-  // Mode selection screen
+  // מסך בחירת מצב נסיעה
   if (phase === 'select') {
     return (
       <SafeAreaView style={s.container}>
@@ -221,7 +230,7 @@ export default function NavigateScreen() {
     );
   }
 
-  // Navigation screen
+  // מסך ניווט
   return (
     <SafeAreaView style={s.container}>
       <View style={s.header}>

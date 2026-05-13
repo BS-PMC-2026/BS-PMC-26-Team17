@@ -43,7 +43,7 @@ async def get_shelters(
         ]
 
     shelters = []
-    async for shelter in db["Shelters"].find(query):
+    async for shelter in db["ShelterTest"].find(query).limit(100):
         shelter["id"] = str(shelter["_id"])
         del shelter["_id"]
         shelters.append(shelter)
@@ -76,7 +76,7 @@ async def create_shelter(body: ShelterCreate):
 
     data = body.model_dump()
     data.pop("user_id")
-    result = await db["Shelters"].insert_one(data)
+    result = await db["ShelterTest"].insert_one(data)
     data["id"] = str(result.inserted_id)
     return {"message": "Shelter added", "shelter": data}
 
@@ -87,7 +87,7 @@ async def delete_shelter(shelter_id: str, user_id: str = Query(...)):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     try:
-        result = await db["Shelters"].delete_one({"_id": ObjectId(shelter_id)})
+        result = await db["ShelterTest"].delete_one({"_id": ObjectId(shelter_id)})
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid shelter id")
 

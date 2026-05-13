@@ -6,8 +6,8 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   ScrollView,
-  Modal,
-  InteractionManager,
+  Animated,
+  Dimensions,
 } from "react-native";
 import MapView, { Marker, PROVIDER_DEFAULT } from "react-native-maps";
 import * as Location from "expo-location";
@@ -122,19 +122,8 @@ export default function MapScreen() {
           });
           if (typeof lat === "number" && typeof lng === "number" && lat !== 0) {
             pins.push(buildPin(lat, lng));
-            continue;
           }
-          // Otherwise - convert address to coordinates
-          if (!sh.address) continue;
-          try {
-            const fullAddr = sh.city ? `${sh.address}, ${sh.city}` : sh.address;
-            const results = await Location.geocodeAsync(fullAddr);
-            if (results.length > 0) {
-              pins.push(buildPin(results[0].latitude, results[0].longitude));
-            }
-          } catch {
-            // continue to next address
-          }
+          // Skip shelters without coords — never geocode (causes memory pressure on iOS)
         }
         setShelterPins(pins);
         // After markers paint, disable tracking for performance
@@ -239,11 +228,37 @@ export default function MapScreen() {
     return `${days} days ago`;
   }
 
-  // Close panel — defer state update so the tap feels instant
+  // Close panel — plain synchronous close (no InteractionManager / Modal)
   const handleClosePanel = useCallback(() => {
-    InteractionManager.runAfterInteractions(() => {
-      setSelectedShelter(null);
-    });
+    setSelectedShelter(null);
+  }, []);
+
+  // Region change throttling: only update visibleRegion when the user has
+  // panned/zoomed meaningfully. Stops marker churn that leaks iOS memory.
+  const regionUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRegion = useRef(visibleRegion);
+  const handleRegionChange = useCallback((r: typeof ISRAEL_REGION) => {
+    const old = lastRegion.current;
+    const latDiff  = Math.abs(r.latitude  - old.latitude);
+    const lngDiff  = Math.abs(r.longitude - old.longitude);
+    const zoomDiff = Math.abs(r.latitudeDelta - old.latitudeDelta);
+    // Ignore tiny movements (less than ~10% of the current view size)
+    if (
+      latDiff  < old.latitudeDelta  * 0.1 &&
+      lngDiff  < old.longitudeDelta * 0.1 &&
+      zoomDiff < old.latitudeDelta  * 0.1
+    ) return;
+
+    if (regionUpdateTimer.current) clearTimeout(regionUpdateTimer.current);
+    regionUpdateTimer.current = setTimeout(() => {
+      lastRegion.current = r;
+      setVisibleRegion(r);
+    }, 400);
+  }, []);
+
+  // Clean up the timer on unmount
+  useEffect(() => () => {
+    if (regionUpdateTimer.current) clearTimeout(regionUpdateTimer.current);
   }, []);
 
   // Stable onPress so memoized markers never re-render
@@ -306,7 +321,7 @@ export default function MapScreen() {
         initialRegion={region}
         showsUserLocation={locationGranted}
         onPress={handleMapPress}
-        onRegionChangeComplete={(r) => setVisibleRegion(r)}
+        onRegionChangeComplete={handleRegionChange}
       >
         {pin && (
           <Marker
@@ -361,6 +376,8 @@ export default function MapScreen() {
   );
 }
 
+const SCREEN_H = Dimensions.get("window").height;
+
 const ShelterPanel = memo(function ShelterPanel({
   shelter,
   onClose,
@@ -382,103 +399,119 @@ const ShelterPanel = memo(function ShelterPanel({
     return `${days} days ago`;
   }
 
+  // Keep the panel mounted while it animates out. `displayed` is the data we render,
+  // `shelter` is the data the parent currently wants visible.
+  const [displayed, setDisplayed] = useState<ShelterPin | null>(shelter);
+  const translateY = useRef(new Animated.Value(SCREEN_H)).current;
+
+  useEffect(() => {
+    if (shelter) {
+      // Opening — swap content immediately, slide up
+      setDisplayed(shelter);
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+    } else if (displayed) {
+      // Closing — slide down, then unmount content
+      Animated.timing(translateY, {
+        toValue: SCREEN_H,
+        duration: 220,
+        useNativeDriver: true,
+      }).start(() => setDisplayed(null));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shelter]);
+
+  if (!displayed) return null;
+  const sh = displayed; // alias so the rest of the JSX can use `sh`
+
   return (
-    <Modal
-      visible={!!shelter}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-      hardwareAccelerated
+    <Animated.View
+      style={[styles.shelterPanel, { transform: [{ translateY }] }]}
+      pointerEvents="box-none"
     >
-      <TouchableOpacity
-        style={styles.modalBackdrop}
-        activeOpacity={1}
-        onPress={onClose}
-      />
-      {shelter && (
-        <View style={styles.shelterPanel}>
           <TouchableOpacity style={styles.panelClose} onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <Text style={styles.panelCloseText}>✕</Text>
           </TouchableOpacity>
 
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <Text style={styles.shelterTitle} numberOfLines={2}>
-              {shelter.name || "Shelter"}
-            </Text>
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <Text style={styles.shelterTitle} numberOfLines={2}>
+          {sh.name || "Shelter"}
+        </Text>
 
-            <View style={styles.iconRow}>
-              {shelter.isAccessible && !shelter.hasStairs && (
-                <Text style={styles.bigIcon}>♿</Text>
-              )}
-              {!shelter.petIssueReported && (
-                <Text style={styles.bigIcon}>🐾</Text>
-              )}
-            </View>
-
-            <View style={styles.badgeRow}>
-              <View
-                style={[
-                  styles.badge,
-                  {
-                    borderColor: ACCESS_COLORS[shelter.accessStatus || "unknown"] + "88",
-                    backgroundColor: ACCESS_COLORS[shelter.accessStatus || "unknown"] + "22",
-                  },
-                ]}
-              >
-                <Text style={[styles.badgeTxt, { color: ACCESS_COLORS[shelter.accessStatus || "unknown"] }]}>
-                  {ACCESS_LABELS[shelter.accessStatus || "unknown"]}
-                </Text>
-              </View>
-
-              <View
-                style={[
-                  styles.badge,
-                  {
-                    borderColor: (shelter.isFull ? "#E24B4A" : "#1D9E75") + "88",
-                    backgroundColor: (shelter.isFull ? "#E24B4A" : "#1D9E75") + "22",
-                  },
-                ]}
-              >
-                <Text style={[styles.badgeTxt, { color: shelter.isFull ? "#E24B4A" : "#1D9E75" }]}>
-                  {shelter.isFull ? "Full" : "Available"}
-                </Text>
-              </View>
-            </View>
-
-            <DataRow label="Address" value={shelter.address || "—"} />
-            <DataRow label="Neighborhood" value={shelter.neighborhood || "—"} />
-            <DataRow label="Area" value={shelter.area || "—"} />
-            <DataRow label="City" value={shelter.city || "—"} />
-            <DataRow
-              label="Type"
-              value={TYPE_LABELS[shelter.placeType || ""] || shelter.placeType || "—"}
-            />
-            <DataRow
-              label="Capacity"
-              value={shelter.capacity != null ? String(shelter.capacity) : "—"}
-            />
-            <DataRow
-              label="Cleanliness"
-              value={CLEAN_LABELS[shelter.cleanlinessStatus || "unknown"]}
-            />
-            <DataRow
-              label="Should Be Open"
-              value={shelter.shouldBeOpen ? "✓ Yes" : "✗ No"}
-            />
-            <DataRow label="Has Stairs" value={shelter.hasStairs ? "Yes" : "No"} />
-            <DataRow label="Accessible" value={shelter.isAccessible ? "Yes" : "No"} />
-            <DataRow label="Last Report" value={timeAgo(shelter.lastReportAt)} />
-            {shelter.lastReportType && (
-              <DataRow label="Report Type" value={shelter.lastReportType} />
-            )}
-          </ScrollView>
-
-          <TouchableOpacity style={styles.navBtn} onPress={onNavigate}>
-            <Text style={styles.navBtnText}>🧭 Navigate Here</Text>
-          </TouchableOpacity>
+        <View style={styles.iconRow}>
+          {sh.isAccessible && !sh.hasStairs && (
+            <Text style={styles.bigIcon}>♿</Text>
+          )}
+          {!sh.petIssueReported && (
+            <Text style={styles.bigIcon}>🐾</Text>
+          )}
         </View>
-      )}
-    </Modal>
+
+        <View style={styles.badgeRow}>
+          <View
+            style={[
+              styles.badge,
+              {
+                borderColor: ACCESS_COLORS[sh.accessStatus || "unknown"] + "88",
+                backgroundColor: ACCESS_COLORS[sh.accessStatus || "unknown"] + "22",
+              },
+            ]}
+          >
+            <Text style={[styles.badgeTxt, { color: ACCESS_COLORS[sh.accessStatus || "unknown"] }]}>
+              {ACCESS_LABELS[sh.accessStatus || "unknown"]}
+            </Text>
+          </View>
+
+          <View
+            style={[
+              styles.badge,
+              {
+                borderColor: (sh.isFull ? "#E24B4A" : "#1D9E75") + "88",
+                backgroundColor: (sh.isFull ? "#E24B4A" : "#1D9E75") + "22",
+              },
+            ]}
+          >
+            <Text style={[styles.badgeTxt, { color: sh.isFull ? "#E24B4A" : "#1D9E75" }]}>
+              {sh.isFull ? "Full" : "Available"}
+            </Text>
+          </View>
+        </View>
+
+        <DataRow label="Address" value={sh.address || "—"} />
+        <DataRow label="Neighborhood" value={sh.neighborhood || "—"} />
+        <DataRow label="Area" value={sh.area || "—"} />
+        <DataRow label="City" value={sh.city || "—"} />
+        <DataRow
+          label="Type"
+          value={TYPE_LABELS[sh.placeType || ""] || sh.placeType || "—"}
+        />
+        <DataRow
+          label="Capacity"
+          value={sh.capacity != null ? String(sh.capacity) : "—"}
+        />
+        <DataRow
+          label="Cleanliness"
+          value={CLEAN_LABELS[sh.cleanlinessStatus || "unknown"]}
+        />
+        <DataRow
+          label="Should Be Open"
+          value={sh.shouldBeOpen ? "✓ Yes" : "✗ No"}
+        />
+        <DataRow label="Has Stairs" value={sh.hasStairs ? "Yes" : "No"} />
+        <DataRow label="Accessible" value={sh.isAccessible ? "Yes" : "No"} />
+        <DataRow label="Last Report" value={timeAgo(sh.lastReportAt)} />
+        {sh.lastReportType && (
+          <DataRow label="Report Type" value={sh.lastReportType} />
+        )}
+      </ScrollView>
+
+      <TouchableOpacity style={styles.navBtn} onPress={onNavigate}>
+        <Text style={styles.navBtnText}>🧭 Navigate Here</Text>
+      </TouchableOpacity>
+    </Animated.View>
   );
 });
 
