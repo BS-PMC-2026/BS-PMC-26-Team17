@@ -34,7 +34,7 @@ OVERPASS_URLS = [
     "https://overpass.openstreetmap.ru/api/interpreter",
 ]
 RADIUS         = 30
-SAFETY_FACTOR  = 0.8
+SAFETY_FACTOR  = 0.5
 SQM_PER_PERSON = 1.0
 
 HEADERS = {"User-Agent": "ToSafePlace-SyncJob/1.0"}
