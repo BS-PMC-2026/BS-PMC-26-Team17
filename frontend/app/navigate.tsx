@@ -76,7 +76,7 @@ export default function NavigateScreen() {
     modes.forEach(m => {
       NavigationService.fetchRoute(userLocation, dest, m)
         .then(r => setRouteCache(prev => ({ ...prev, [m]: r })))
-        .catch(() => {});
+        .catch(e => console.warn(`[Nav] ${m} fetch failed:`, e));
     });
   }, [userLocation]);
 
@@ -235,6 +235,9 @@ export default function NavigateScreen() {
         <View style={s.headerInfo}>
           <Text style={s.destName} numberOfLines={1}>{name || 'Shelter'}</Text>
           {eta && distance && <Text style={s.etaText}>{eta}  ·  {distance}</Text>}
+          <Text style={s.destSub}>
+            {mode === 'foot' ? '🚶 Walking' : mode === 'cycling' ? '🚴 Cycling' : '🚗 Driving'}
+          </Text>
         </View>
       </View>
 

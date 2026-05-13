@@ -14,10 +14,11 @@ export interface RouteResult {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const OSRM_PROFILE: Record<Mode, string> = {
-  foot:    'foot',
-  cycling: 'bike',
-  driving: 'car',
+// Each mode has its own OSRM server — router.project-osrm.org only has driving data
+const OSRM_BASE: Record<Mode, string> = {
+  foot:    'https://routing.openstreetmap.de/routed-foot/route/v1/foot',
+  cycling: 'https://routing.openstreetmap.de/routed-bike/route/v1/bike',
+  driving: 'https://routing.openstreetmap.de/routed-car/route/v1/driving',
 };
 
 const SPEED_KMH: Record<Mode, number> = {
@@ -152,9 +153,8 @@ export class NavigationService {
 
   /** Fetch a route from OSRM and return a full RouteResult */
   static async fetchRoute(from: Coord, to: Coord, mode: Mode): Promise<RouteResult> {
-    const profile = OSRM_PROFILE[mode];
     const url =
-      `https://router.project-osrm.org/route/v1/${profile}/` +
+      `${OSRM_BASE[mode]}/` +
       `${from.longitude},${from.latitude};${to.longitude},${to.latitude}` +
       `?overview=full&geometries=geojson&steps=true`;
 
