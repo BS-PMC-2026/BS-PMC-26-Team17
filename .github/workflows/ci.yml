@@ -72,10 +72,6 @@ jobs:
         working-directory: frontend
         run: npm test -- --watchAll=false
 
-      - name: Build Expo web bundle
-        working-directory: frontend
-        run: npx expo export --platform web --output-dir web-build
-
       - name: Zip web bundle
         run: |
           mkdir -p dist
