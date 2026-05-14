@@ -5,3 +5,4 @@ Backend/.env
 **/*.pyc
 node_modules/
 */node_modules/
+# Auto-generated cache files
