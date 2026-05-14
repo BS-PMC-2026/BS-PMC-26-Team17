@@ -11,6 +11,7 @@ import {
   Pressable,
   Alert,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/auth";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -241,6 +242,7 @@ function timeAgo(dateStr: string): string {
 }
 
 export default function ShelterDashboard() {
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [shelters, setShelters] = useState<Shelter[]>([]);
@@ -372,7 +374,7 @@ export default function ShelterDashboard() {
   ).length;
 
   return (
-    <View style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       {/* Status cards — total on right, closed on left */}
       <View style={s.statsRow}>
         {[
