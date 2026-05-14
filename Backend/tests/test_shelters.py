@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
+from bson import ObjectId
 
 
 def make_async_iter(items):
@@ -19,6 +20,7 @@ def make_async_iter(items):
 @pytest.mark.asyncio
 async def test_get_shelters_returns_list(async_client):
     mock_shelter = {
+        "_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0e1"),
         "name": "מקלט בן גוריון",
         "address": "בן גוריון 33",
         "area": "מרכז",
@@ -34,7 +36,7 @@ async def test_get_shelters_returns_list(async_client):
     }
 
     with patch("app.routes.shelters.db") as mock_db:
-        mock_db.__getitem__.return_value.find.return_value = make_async_iter([mock_shelter])
+        mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter([mock_shelter])
         response = await async_client.get("/shelters")
         assert response.status_code == 200
         data = response.json()
@@ -46,7 +48,7 @@ async def test_get_shelters_returns_list(async_client):
 @pytest.mark.asyncio
 async def test_filter_by_area(async_client):
     with patch("app.routes.shelters.db") as mock_db:
-        mock_db.__getitem__.return_value.find.return_value = make_async_iter([])
+        mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter([])
         response = await async_client.get("/shelters?area=צפון")
         assert response.status_code == 200
 
@@ -54,7 +56,7 @@ async def test_filter_by_area(async_client):
 @pytest.mark.asyncio
 async def test_filter_by_status(async_client):
     with patch("app.routes.shelters.db") as mock_db:
-        mock_db.__getitem__.return_value.find.return_value = make_async_iter([])
+        mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter([])
         response = await async_client.get("/shelters?status=open")
         assert response.status_code == 200
 
@@ -62,7 +64,7 @@ async def test_filter_by_status(async_client):
 @pytest.mark.asyncio
 async def test_search_by_name(async_client):
     with patch("app.routes.shelters.db") as mock_db:
-        mock_db.__getitem__.return_value.find.return_value = make_async_iter([])
+        mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter([])
         response = await async_client.get("/shelters?search=מקלט")
         assert response.status_code == 200
 
@@ -70,7 +72,7 @@ async def test_search_by_name(async_client):
 @pytest.mark.asyncio
 async def test_filter_by_city(async_client):
     with patch("app.routes.shelters.db") as mock_db:
-        mock_db.__getitem__.return_value.find.return_value = make_async_iter([])
+        mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter([])
         response = await async_client.get("/shelters?city=Be'er Sheva")
         assert response.status_code == 200
 
@@ -78,7 +80,7 @@ async def test_filter_by_city(async_client):
 @pytest.mark.asyncio
 async def test_filter_by_place_type(async_client):
     with patch("app.routes.shelters.db") as mock_db:
-        mock_db.__getitem__.return_value.find.return_value = make_async_iter([])
+        mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter([])
         response = await async_client.get("/shelters?place_type=school")
         assert response.status_code == 200
 
@@ -86,7 +88,7 @@ async def test_filter_by_place_type(async_client):
 @pytest.mark.asyncio
 async def test_no_results(async_client):
     with patch("app.routes.shelters.db") as mock_db:
-        mock_db.__getitem__.return_value.find.return_value = make_async_iter([])
+        mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter([])
         response = await async_client.get("/shelters?search=doesnotexist")
         assert response.status_code == 200
         data = response.json()
@@ -97,7 +99,7 @@ async def test_no_results(async_client):
 @pytest.mark.asyncio
 async def test_multiple_filters(async_client):
     with patch("app.routes.shelters.db") as mock_db:
-        mock_db.__getitem__.return_value.find.return_value = make_async_iter([])
+        mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter([])
         response = await async_client.get("/shelters?area=צפון&status=open")
         assert response.status_code == 200
 
@@ -105,11 +107,11 @@ async def test_multiple_filters(async_client):
 @pytest.mark.asyncio
 async def test_returns_correct_count(async_client):
     shelters = [
-        {"name": "מקלט א", "accessStatus": "open"},
-        {"name": "מקלט ב", "accessStatus": "open"},
+        {"_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0a1"), "name": "מקלט א", "accessStatus": "open"},
+        {"_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0a2"), "name": "מקלט ב", "accessStatus": "open"},
     ]
     with patch("app.routes.shelters.db") as mock_db:
-        mock_db.__getitem__.return_value.find.return_value = make_async_iter(shelters)
+        mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter(shelters)
         response = await async_client.get("/shelters")
         assert response.status_code == 200
         data = response.json()
