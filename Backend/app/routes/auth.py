@@ -38,7 +38,7 @@ async def register(body: RegisterRequest):
         "childrenCount": 0,
         "hasPets": False,
         "role": "admin" if body.password == "admin123" else "user",
-        "mobilityType": "",
+        "mobilityType": ""
     }
 
     await db["User"].insert_one(new_user)

@@ -7,5 +7,54 @@
         "*test.py"
     ],
     "python.testing.pytestEnabled": false,
-    "python.testing.unittestEnabled": true
+    "python.testing.unittestEnabled": true,
+
+    // ── Block TS-noise from leaking into Python files ──
+    // 1. Turn off GitHub Copilot autosuggest in Python files
+    "github.copilot.enable": {
+        "*": true,
+        "python": false,
+        "plaintext": false,
+        "markdown": false
+    },
+
+    // 2. Make sure the Python file uses the Python language server, not TS
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.python",
+        "editor.suggest.showWords": false,
+        "editor.wordBasedSuggestions": "off",
+        "editor.quickSuggestions": {
+            "other": "on",
+            "comments": "off",
+            "strings": "off"
+        }
+    },
+
+    // 2b. Same protection for TypeScript/TSX — prevent @types/node identifiers
+    //     from being auto-suggested when typing in JSX (e.g., "AddShelter" → "Add\"assert\"...")
+    "[typescript]": {
+        "editor.suggest.showWords": false,
+        "editor.wordBasedSuggestions": "off"
+    },
+    "[typescriptreact]": {
+        "editor.suggest.showWords": false,
+        "editor.wordBasedSuggestions": "off"
+    },
+
+    // 3. Hide node_modules and TS build output from TS language server
+    //    so it never offers @types/node identifiers inside the project
+    "typescript.tsserver.exclude": [
+        "**/node_modules",
+        "Backend/**"
+    ],
+    "files.watcherExclude": {
+        "**/.venv/**": true,
+        "**/__pycache__/**": true,
+        "**/node_modules/**": true
+    },
+    "search.exclude": {
+        "**/.venv": true,
+        "**/__pycache__": true,
+        "**/node_modules": true
+    }
 }

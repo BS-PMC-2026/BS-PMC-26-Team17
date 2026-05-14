@@ -36,7 +36,7 @@ export default function NavigateScreen() {
   const recalcCooldown = useRef(false);
 
   const [phase, setPhase]                     = useState<'select' | 'navigating'>(
-    isEmergency ? 'navigating' : 'select'   // emergency → ישר לניווט
+    isEmergency ? 'navigating' : 'select'   // emergency → straight to navigation
   );
   const [mode, setMode]                       = useState<Mode>('foot');
   const [userLocation, setUserLocation]       = useState<Coord | null>(null);
@@ -49,19 +49,19 @@ export default function NavigateScreen() {
   const [error, setError]                     = useState('');
   const [routeCache, setRouteCache]           = useState<Partial<Record<Mode, RouteResult>>>({});
 
-  // ─── מיקום ראשוני ─────────────────────────────────────────────────────────
+  // ─── Initial location ─────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') { setError('Location permission needed'); return; }
 
-      // getLastKnownPositionAsync → מיידי (cache מהמפה), מספיק לpreview
+      // getLastKnownPositionAsync → instant (cache from map), enough for preview
       const last = await Location.getLastKnownPositionAsync();
       if (last) {
         setUserLocation({ latitude: last.coords.latitude, longitude: last.coords.longitude });
       }
 
-      // getCurrentPositionAsync → מדויק יותר, לניווט ממש
+      // getCurrentPositionAsync → more accurate, for actual navigation
       const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       setUserLocation({ latitude: fresh.coords.latitude, longitude: fresh.coords.longitude });
     })();
@@ -69,7 +69,7 @@ export default function NavigateScreen() {
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // ─── שליפת שלושת המסלולים במקביל ברקע ───────────────────────────────────
+  // Fetch all three routes in parallel in the background
   useEffect(() => {
     if (!userLocation || isEmergency) return;
     const modes: Mode[] = ['foot', 'cycling', 'driving'];
@@ -80,7 +80,7 @@ export default function NavigateScreen() {
     });
   }, [userLocation]);
 
-  // ─── Emergency: מתחיל ניווט אוטומטי ברגע שיש מיקום ─────────────────────
+  // ─── Emergency: auto-start navigation as soon as location is available ─
   useEffect(() => {
     if (!isEmergency || !userLocation) return;
     NavigationService.emergencyRoute(userLocation, dest)
@@ -89,7 +89,7 @@ export default function NavigateScreen() {
       .finally(() => setLoading(false));
   }, [isEmergency, userLocation]);
 
-  // ─── מיישם RouteResult על ה-state ─────────────────────────────────────────
+  // ─── Apply RouteResult to state ─────────────────────────────────────────
   function applyRoute(result: RouteResult) {
     polylineRef.current = result.polyline;
     stepsRef.current    = result.steps;
@@ -120,9 +120,10 @@ export default function NavigateScreen() {
     }
   };
 
-  // ─── GPS watch — מתחיל רק כשניווט פעיל ──────────────────────────────────
+  // ─── GPS watch — starts only when navigating, safely cleaned on unmount ─
   useEffect(() => {
     if (phase !== 'navigating') return;
+    let cancelled = false;
     Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, distanceInterval: 10 },
       (loc) => {
@@ -132,8 +133,16 @@ export default function NavigateScreen() {
         );
         advanceOnRoute(coords);
       }
-    ).then(sub => { watchRef.current = sub; });
-    return () => { watchRef.current?.remove(); };
+    ).then(sub => {
+      // If unmounted before subscription was created, cancel immediately
+      if (cancelled) { sub.remove(); return; }
+      watchRef.current = sub;
+    });
+    return () => {
+      cancelled = true;
+      watchRef.current?.remove();
+      watchRef.current = null;
+    };
   }, [phase]);
 
   // ─── עדכון מיקום בזמן ניווט ──────────────────────────────────────────────
@@ -162,9 +171,7 @@ export default function NavigateScreen() {
 
   const arrived = steps[currentStep]?.maneuver?.type === 'arrive';
 
-  // ═══════════════════════════════════════════════════════════════════════════
   // מסך בחירת מצב נסיעה
-  // ═══════════════════════════════════════════════════════════════════════════
   if (phase === 'select') {
     return (
       <SafeAreaView style={s.container}>
@@ -223,9 +230,7 @@ export default function NavigateScreen() {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
   // מסך ניווט
-  // ═══════════════════════════════════════════════════════════════════════════
   return (
     <SafeAreaView style={s.container}>
       <View style={s.header}>
