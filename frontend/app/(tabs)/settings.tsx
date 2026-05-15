@@ -10,9 +10,11 @@ import {
   Alert
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/auth';
 
 export default function SettingsScreen() {
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [address, setAddress] = useState('');
   const [radius, setRadius] = useState('');
@@ -137,7 +139,7 @@ export default function SettingsScreen() {
   );
 
   return (
-    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
+    <ScrollView style={[styles.container, { paddingTop: insets.top }]} keyboardShouldPersistTaps="handled">
       <Text style={styles.header}>Emergency Settings</Text>
 
       {/* Address Section */}
