@@ -291,10 +291,8 @@ export default function ShelterDashboard() {
   const [area, setArea] = useState("All Areas");
   const [type, setType] = useState("All Types");
   const [chips, setChips] = useState<string[]>([]);
-  const [reportCounts, setReportCounts] = useState<Record<string, number>>({});
+  const [allReports, setAllReports] = useState<Report[]>([]);
   const [selectedShelter, setSelectedShelter] = useState<Shelter | null>(null);
-  const [shelterReports, setShelterReports] = useState<Report[]>([]);
-  const [reportsLoading, setReportsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"active" | "history">("active");
   const [doneInputs, setDoneInputs] = useState<Record<string, { resolvedAt: string; handledBy: string }>>({});
 
@@ -396,55 +394,29 @@ export default function ShelterDashboard() {
       if (city !== "All Cities") p.append("city", city);
       if (area !== "All Areas") p.append("area", area);
       if (type !== "All Types") p.append("place_type", type);
-      const res = await fetch(`${API_URL}/shelters?${p}`);
-      const data = await res.json();
-      const shelterList: Shelter[] = data.shelters || [];
-      setShelters(shelterList);
-
-      const results = await Promise.allSettled(
-        shelterList.map(async (s) => {
-          if (!s.id) return { id: "", count: 0 };
-          const r = await fetch(`${API_URL}/shelters/${s.id}/reports`);
-          if (!r.ok) return { id: s.id, count: 0 };
-          const d = await r.json();
-          const count = (d.reports || []).filter((rep: any) => rep.status !== "done").length;
-          return { id: s.id, count };
-        })
-      );
-      const counts: Record<string, number> = {};
-      results.forEach((result) => {
-        if (result.status === "fulfilled" && result.value.id) {
-          counts[result.value.id] = result.value.count;
-        }
-      });
-      setReportCounts(counts);
+      const sheltersRes = await fetch(`${API_URL}/shelters?${p}`);
+      const sheltersData = await sheltersRes.json();
+      setShelters(sheltersData.shelters || []);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
+    // Fetch reports in background after table is visible
+    fetch(`${API_URL}/reports`)
+      .then((r) => r.json())
+      .then((d) => setAllReports(d.reports || []))
+      .catch(() => {});
   };
 
   useEffect(() => {
     load();
   }, [city, area, type]);
 
-  const openShelterDetail = async (shelter: Shelter) => {
+  const openShelterDetail = (shelter: Shelter) => {
     setSelectedShelter(shelter);
     setActiveTab("active");
-    setShelterReports([]);
     setDoneInputs({});
-    if (!shelter.id) return;
-    setReportsLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/shelters/${shelter.id}/reports`);
-      const data = await res.json();
-      setShelterReports(data.reports || []);
-    } catch {
-      // ignore network errors
-    } finally {
-      setReportsLoading(false);
-    }
   };
 
   const updateReportStatus = async (
@@ -468,13 +440,18 @@ export default function ShelterDashboard() {
         Alert.alert("Error", err.detail || "Failed to update report");
         return;
       }
-      if (selectedShelter?.id) {
-        const r = await fetch(`${API_URL}/shelters/${selectedShelter.id}/reports`);
-        const d = await r.json();
-        setShelterReports(d.reports || []);
-        const count = (d.reports || []).filter((rep: any) => rep.status !== "done").length;
-        setReportCounts((prev) => ({ ...prev, [selectedShelter.id!]: count }));
-      }
+      setAllReports((prev) =>
+        prev.map((r) => {
+          if (r.id !== reportId) return r;
+          return {
+            ...r,
+            status,
+            ...(extra?.resolvedAt ? { resolvedAt: extra.resolvedAt } : {}),
+            ...(extra?.handledBy  ? { handledBy:  extra.handledBy  } : {}),
+            ...(status === "forwarded" ? { forwardedAt: body.forwardedAt } : {}),
+          };
+        })
+      );
       setDoneInputs((prev) => {
         const next = { ...prev };
         delete next[reportId];
@@ -520,6 +497,21 @@ export default function ShelterDashboard() {
       (s.isActive && s.shouldBeOpen && s.accessStatus === "locked") ||
       !s.shouldBeOpen,
   ).length;
+
+  const reportCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    allReports.forEach((r) => {
+      if (r.shelterId && r.status !== "done") {
+        counts[r.shelterId] = (counts[r.shelterId] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [allReports]);
+
+  const shelterReports = useMemo(
+    () => allReports.filter((r) => r.shelterId === selectedShelter?.id),
+    [allReports, selectedShelter],
+  );
 
   const activeReports = shelterReports.filter((r) => r.status !== "done" && !r.resolvedAt);
   const historyReports = shelterReports.filter((r) => r.status === "done" && !!r.resolvedAt);
@@ -945,9 +937,7 @@ export default function ShelterDashboard() {
           </View>
 
           {/* Reports list */}
-          {reportsLoading ? (
-            <ActivityIndicator style={{ marginTop: 40 }} color="#378ADD" />
-          ) : tabReports.length === 0 ? (
+          {tabReports.length === 0 ? (
             <Text style={md.empty}>No reports</Text>
           ) : (
             <ScrollView style={{ flex: 1 }} contentContainerStyle={md.reportsList}>

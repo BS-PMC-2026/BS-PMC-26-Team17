@@ -156,6 +156,16 @@ class ReportUpdate(BaseModel):
     handledBy: Optional[str] = None
 
 
+@reports_router.get("")
+async def get_all_reports():
+    reports = []
+    async for report in db["Reports"].find({}).sort("createdAt", -1):
+        report["id"] = str(report["_id"])
+        del report["_id"]
+        reports.append(report)
+    return {"reports": reports, "count": len(reports)}
+
+
 @reports_router.patch("/{report_id}")
 async def update_report(report_id: str, body: ReportUpdate):
     if not await _is_admin(body.user_id):
