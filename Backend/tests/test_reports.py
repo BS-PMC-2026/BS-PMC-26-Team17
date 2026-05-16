@@ -291,8 +291,8 @@ async def test_get_reports_returns_list(async_client):
     assert "reports" in data
     assert "count" in data
     assert data["count"] == 1
-    # _id should be stringified
-    assert data["reports"][0]["_id"] == "65a1b2c3d4e5f6a7b8c9d0a9"
+    # _id is exposed as "id"
+    assert data["reports"][0]["id"] == "65a1b2c3d4e5f6a7b8c9d0a9"
 
 
 @pytest.mark.asyncio

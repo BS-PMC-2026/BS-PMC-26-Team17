@@ -33,7 +33,7 @@ export default function AppLayout() {
           options={{
             title: "Home",
             drawerLabel: "Home",
-            drawerIcon: ({ color }) => (
+            drawerIcon: ({ color }: { color: string }) => (
               <IconSymbol size={22} name="house.fill" color={color} />
             ),
           }}
@@ -43,7 +43,7 @@ export default function AppLayout() {
           options={{
             title: "Map",
             drawerLabel: "Map",
-            drawerIcon: ({ color }) => (
+            drawerIcon: ({ color }: { color: string }) => (
               <IconSymbol size={22} name="map.fill" color={color} />
             ),
           }}
@@ -53,7 +53,7 @@ export default function AppLayout() {
           options={{
             title: "Settings",
             drawerLabel: "Settings",
-            drawerIcon: ({ color }) => (
+            drawerIcon: ({ color }: { color: string }) => (
               <IconSymbol size={22} name="gearshape.fill" color={color} />
             ),
           }}
@@ -63,7 +63,7 @@ export default function AppLayout() {
           options={{
             title: "Shelter Dashboard",
             drawerLabel: "Shelter Dashboard",
-            drawerIcon: ({ color }) => (
+            drawerIcon: ({ color }: { color: string }) => (
               <IconSymbol size={22} name="list.bullet" color={color} />
             ),
             // drawerItemStyle: isAdmin ? undefined : { display: "none" },
@@ -74,7 +74,7 @@ export default function AppLayout() {
           options={{
             title: "Add Shelter",
             drawerLabel: "Add Shelter",
-            drawerIcon: ({ color }) => (
+            drawerIcon: ({ color }: { color: string }) => (
               <IconSymbol size={22} name="plus.circle.fill" color={color} />
             ),
             // drawerItemStyle: isAdmin ? undefined : { display: "none" },
@@ -85,7 +85,7 @@ export default function AppLayout() {
           options={{
             title: "Explore",
             drawerLabel: "Explore",
-            drawerIcon: ({ color }) => (
+            drawerIcon: ({ color }: { color: string }) => (
               <IconSymbol size={22} name="paperplane.fill" color={color} />
             ),
             drawerItemStyle: isAdmin ? undefined : { display: "none" },
