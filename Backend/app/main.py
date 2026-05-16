@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import health, auth, shelters
+from app.routes import health, auth, shelters, reports
 from app.core.database import client
 
 
@@ -27,6 +27,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(shelters.router)
+app.include_router(reports.router)
 
 
 @app.on_event("startup")
