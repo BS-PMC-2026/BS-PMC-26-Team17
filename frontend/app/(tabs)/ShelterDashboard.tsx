@@ -12,6 +12,7 @@ import {
   Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useLocalSearchParams } from "expo-router";
 import { useAuth } from "@/context/auth";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -289,9 +290,10 @@ export default function ShelterDashboard() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const { search: initialSearch } = useLocalSearchParams<{ search?: string }>();
   const [shelters, setShelters] = useState<Shelter[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch ?? "");
   const [city, setCity] = useState("All Cities");
   const [area, setArea] = useState("All Areas");
   const [type, setType] = useState("All Types");
@@ -416,6 +418,10 @@ export default function ShelterDashboard() {
       .then((d) => setAllReports(d.reports || []))
       .catch(() => {});
   };
+
+  useEffect(() => {
+    if (initialSearch) setSearch(initialSearch);
+  }, [initialSearch]);
 
   useEffect(() => {
     load();

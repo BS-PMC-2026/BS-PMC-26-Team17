@@ -407,6 +407,60 @@ async def test_update_shelter_should_be_open_false(async_client):
     assert updates.get("shouldBeOpen") is False
 
 
+@pytest.mark.asyncio
+async def test_update_shelter_cleanliness_clean(async_client):
+    """PATCH with cleanlinessStatus=clean reaches the DB with the correct value."""
+    db, shelter_coll = build_shelters_db_mock(
+        user={"_id": ObjectId(ADMIN_ID), "role": "admin"},
+    )
+    with patch("app.routes.shelters.db", db):
+        response = await async_client.patch(f"/shelters/{SHELTER_OID}", json={
+            "user_id": ADMIN_ID,
+            "cleanlinessStatus": "clean",
+        })
+    assert response.status_code == 200
+    assert response.json()["message"] == "Shelter updated"
+    updates = shelter_coll.update_one.call_args.args[1]["$set"]
+    assert updates.get("cleanlinessStatus") == "clean"
+
+
+@pytest.mark.asyncio
+async def test_update_shelter_is_accessible_true(async_client):
+    """PATCH with isAccessible=True reaches the DB with the correct value."""
+    db, shelter_coll = build_shelters_db_mock(
+        user={"_id": ObjectId(ADMIN_ID), "role": "admin"},
+    )
+    with patch("app.routes.shelters.db", db):
+        response = await async_client.patch(f"/shelters/{SHELTER_OID}", json={
+            "user_id": ADMIN_ID,
+            "isAccessible": True,
+        })
+    assert response.status_code == 200
+    assert response.json()["message"] == "Shelter updated"
+    updates = shelter_coll.update_one.call_args.args[1]["$set"]
+    assert updates.get("isAccessible") is True
+
+
+@pytest.mark.asyncio
+async def test_update_shelter_combined_fields(async_client):
+    """PATCH with accessStatus + shouldBeOpen + isAccessible all reach the DB together."""
+    db, shelter_coll = build_shelters_db_mock(
+        user={"_id": ObjectId(ADMIN_ID), "role": "admin"},
+    )
+    with patch("app.routes.shelters.db", db):
+        response = await async_client.patch(f"/shelters/{SHELTER_OID}", json={
+            "user_id": ADMIN_ID,
+            "accessStatus": "open",
+            "shouldBeOpen": True,
+            "isAccessible": True,
+        })
+    assert response.status_code == 200
+    updates = shelter_coll.update_one.call_args.args[1]["$set"]
+    assert updates.get("accessStatus") == "open"
+    assert updates.get("shouldBeOpen") is True
+    assert updates.get("isAccessible") is True
+
+
 # ── DELETE /shelters/{shelter_id} ────────────────────────────────────────────
 
 @pytest.mark.asyncio
