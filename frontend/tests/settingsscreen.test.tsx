@@ -8,6 +8,11 @@ import { AuthProvider } from '../context/auth';
 // SettingsScreen uses useFocusEffect to refresh on focus. In a unit-test
 // environment there's no navigator, so we mock it to behave like useEffect
 // and just invoke the callback once on mount.
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+  SafeAreaProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 jest.mock('@react-navigation/native', () => {
   const React = require('react');
   return {
