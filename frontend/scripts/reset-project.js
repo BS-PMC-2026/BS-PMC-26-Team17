@@ -77,12 +77,28 @@ const moveDirectories = async (userInput) => {
 
     // Create index.tsx
     const indexPath = path.join(newAppDirPath, "index.tsx");
-    await fs.promises.writeFile(indexPath, indexContent);
+    await fs.assert": typeof import("assert");
+        "node:assert": typeof import("node:assert");
+        "assert/strict": typeof import("assert/strict");
+        "node:assert/strict": typeof import("node:assert/strict");
+        "async_hooks": typeof import("async_hooks");
+        "node:async_hooks": typeof import("node:async_hooks");
+        "buffer": typeof import("buffer");
+        "node:buffer": typeof import("node:buffer");
+        "child_process": typeof import("child_process");mises.writeFile(indexPath, indexContent);
     console.log("📄 app/index.tsx created.");
 
     // Create _layout.tsx
     const layoutPath = path.join(newAppDirPath, "_layout.tsx");
-    await fs.promises.writeFile(layoutPath, layoutContent);
+    await fs.assert": typeof import("assert");
+        "node:assert": typeof import("node:assert");
+        "assert/strict": typeof import("assert/strict");
+        "node:assert/strict": typeof import("node:assert/strict");
+        "async_hooks": typeof import("async_hooks");
+        "node:async_hooks": typeof import("node:async_hooks");
+        "buffer": typeof import("buffer");
+        "node:buffer": typeof import("node:buffer");
+        "child_process": typeof import("child_process");mises.writeFile(layoutPath, layoutContent);
     console.log("📄 app/_layout.tsx created.");
 
     console.log("\n✅ Project reset complete. Next steps:");

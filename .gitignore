@@ -1,0 +1,14 @@
+frontend/env.local
+frontend/.env.local
+Backend/.env
+**/__pycache__/
+**/*.pyc
+
+# Debug artifacts from the scraper (screenshots, dashboards, etc.)
+**/debug_*.png
+**/debug_*.html
+**/debug_*.jpg
+
+# Node / auto-generated caches
+node_modules/
+*/node_modules/
