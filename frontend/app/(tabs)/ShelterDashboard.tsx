@@ -101,6 +101,11 @@ const REPORT_LABELS: Record<string, string> = {
 const CITIES = ["All Cities", "Be'er Sheva"];
 const AREAS = ["All Areas", "North", "South", "East", "West"];
 const TYPES = ["All Types", "public shelter", "school", "parking", "other"];
+const STATUSES = ["All Status", "open", "closed", "locked", "unknown"];
+const STATUS_DROPDOWN_LABELS: Record<string, string> = {
+  "All Status": "All Status",
+  ...ACCESS_LABELS,
+};
 const CHIPS = [
   "All",
   "Inactive",
@@ -290,6 +295,7 @@ export default function ShelterDashboard() {
   const [city, setCity] = useState("All Cities");
   const [area, setArea] = useState("All Areas");
   const [type, setType] = useState("All Types");
+  const [status, setStatus] = useState("All Status");
   const [chips, setChips] = useState<string[]>([]);
   const [allReports, setAllReports] = useState<Report[]>([]);
   const [selectedShelter, setSelectedShelter] = useState<Shelter | null>(null);
@@ -395,6 +401,7 @@ export default function ShelterDashboard() {
       if (city !== "All Cities") p.append("city", city);
       if (area !== "All Areas") p.append("area", area);
       if (type !== "All Types") p.append("place_type", type);
+      if (status !== "All Status") p.append("status", status);
       const sheltersRes = await fetch(`${API_URL}/shelters?${p}`);
       const sheltersData = await sheltersRes.json();
       setShelters(sheltersData.shelters || []);
@@ -412,7 +419,7 @@ export default function ShelterDashboard() {
 
   useEffect(() => {
     load();
-  }, [city, area, type]);
+  }, [city, area, type, status]);
 
   const openShelterDetail = (shelter: Shelter) => {
     setSelectedShelter(shelter);
@@ -518,6 +525,11 @@ export default function ShelterDashboard() {
           s.neighborhood?.toLowerCase().includes(q),
       );
     }
+    if (status !== "All Status")
+      list = list.filter((s) => {
+        const ov = shelterOverrides[s.id || ""] || {};
+        return (ov.accessStatus ?? s.accessStatus ?? "unknown") === status;
+      });
     if (chips.includes("Inactive"))
       list = list.filter((s) => !s.isActive);
     if (chips.includes("Pet Friendly 🐾"))
@@ -530,7 +542,7 @@ export default function ShelterDashboard() {
     if (chips.includes("Recently Reported"))
       list = list.filter((s) => !!lastReportByShelterId[s.id || ""]);
     return list;
-  }, [shelters, search, chips, shelterOverrides, lastReportByShelterId]);
+  }, [shelters, search, chips, status, shelterOverrides, lastReportByShelterId]);
 
   const totalCount = filtered.filter((s) => s.isVisibleOnMap).length;
   const openCount = filtered.filter(
@@ -556,7 +568,7 @@ export default function ShelterDashboard() {
   const tabReports = activeTab === "active" ? activeReports : historyReports;
 
   return (
-    <View style={[s.container, { paddingTop: insets.top }]}>
+    <View style={[s.container, { paddingTop: Math.max(0, insets.top - 10) }]}>
       {/* Status cards */}
       <View style={s.statsRow}>
         {[
@@ -591,11 +603,11 @@ export default function ShelterDashboard() {
 
       {/* Dropdowns */}
       <View style={s.dropRow}>
-        <Dropdown label="City"       value={city} options={CITIES} onChange={setCity} />
+        <Dropdown label="City"       value={city}   options={CITIES}    onChange={setCity} />
         <View style={{ width: 10 }} />
-        <Dropdown label="Area"       value={area} options={AREAS}  onChange={setArea} />
+        <Dropdown label="Area"       value={area}   options={AREAS}     onChange={setArea} />
         <View style={{ width: 10 }} />
-        <Dropdown label="Place Type" value={type} options={TYPES}  onChange={setType} labelMap={TYPE_LABELS} />
+        <Dropdown label="Status"     value={status} options={STATUSES}  onChange={setStatus} labelMap={STATUS_DROPDOWN_LABELS} />
       </View>
 
       {/* Chips */}
@@ -1149,7 +1161,7 @@ const s = StyleSheet.create({
     padding: 14,
     paddingTop: 1,
   },
-  statsRow: { flexDirection: "row", gap: 12, marginBottom: 18 },
+  statsRow: { flexDirection: "row", gap: 12, marginBottom: 18, marginTop: -8 },
   statCard: {
     flex: 1,
     height: 100,
