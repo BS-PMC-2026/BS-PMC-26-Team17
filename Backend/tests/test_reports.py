@@ -307,3 +307,122 @@ async def test_get_reports_empty(async_client):
     data = response.json()
     assert data["count"] == 0
     assert data["reports"] == []
+
+
+# ── PATCH /reports/{report_id} ───────────────────────────────────────────────
+
+# IDs used only in PATCH / filter tests — kept separate from POST constants
+REPORT_ID   = "65a1b2c3d4e5f6a7b8c9d0f1"
+ADMIN_ID    = "65a1b2c3d4e5f6a7b8c9d0f2"
+NON_ADMIN_ID = "65a1b2c3d4e5f6a7b8c9d0f3"
+
+
+def build_patch_db_mock(*, user=None, update_matched=1):
+    """Mock for PATCH /reports — needs User (admin check) and Report (update_one)."""
+    user_coll = MagicMock()
+    user_coll.find_one = AsyncMock(return_value=user)
+
+    report_coll = MagicMock()
+    report_coll.update_one = AsyncMock(
+        return_value=MagicMock(matched_count=update_matched)
+    )
+
+    def get_collection(name):
+        return {"User": user_coll, "Report": report_coll}.get(name, MagicMock())
+
+    db = MagicMock()
+    db.__getitem__.side_effect = get_collection
+    return db, report_coll
+
+
+@pytest.mark.asyncio
+async def test_update_report_status_forwarded(async_client):
+    """Admin can set status=forwarded; the value reaches the DB."""
+    db, report_coll = build_patch_db_mock(
+        user={"_id": ObjectId(ADMIN_ID), "role": "admin"},
+    )
+    with patch("app.routes.reports.db", db):
+        response = await async_client.patch(f"/reports/{REPORT_ID}", json={
+            "user_id": ADMIN_ID,
+            "status": "forwarded",
+            "forwardedAt": "2025-05-01T12:00:00",
+        })
+    assert response.status_code == 200
+    assert response.json()["message"] == "Report updated"
+    updates = report_coll.update_one.call_args.args[1]["$set"]
+    assert updates.get("status") == "forwarded"
+
+
+@pytest.mark.asyncio
+async def test_update_report_status_done_with_meta(async_client):
+    """Admin can set status=done with resolvedAt and handledBy; all values reach the DB."""
+    db, report_coll = build_patch_db_mock(
+        user={"_id": ObjectId(ADMIN_ID), "role": "admin"},
+    )
+    with patch("app.routes.reports.db", db):
+        response = await async_client.patch(f"/reports/{REPORT_ID}", json={
+            "user_id": ADMIN_ID,
+            "status": "done",
+            "resolvedAt": "2025-05-01T14:00:00",
+            "handledBy": "Officer Cohen",
+        })
+    assert response.status_code == 200
+    updates = report_coll.update_one.call_args.args[1]["$set"]
+    assert updates.get("status") == "done"
+    assert updates.get("resolvedAt") == "2025-05-01T14:00:00"
+    assert updates.get("handledBy") == "Officer Cohen"
+
+
+@pytest.mark.asyncio
+async def test_update_report_non_admin_forbidden(async_client):
+    """Regular user cannot update a report — expects 403."""
+    db, _ = build_patch_db_mock(
+        user={"_id": ObjectId(NON_ADMIN_ID), "role": "user"},
+    )
+    with patch("app.routes.reports.db", db):
+        response = await async_client.patch(f"/reports/{REPORT_ID}", json={
+            "user_id": NON_ADMIN_ID,
+            "status": "forwarded",
+        })
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_update_report_not_found(async_client):
+    """PATCH on a non-existent report returns 404."""
+    db, _ = build_patch_db_mock(
+        user={"_id": ObjectId(ADMIN_ID), "role": "admin"},
+        update_matched=0,
+    )
+    with patch("app.routes.reports.db", db):
+        response = await async_client.patch(f"/reports/{REPORT_ID}", json={
+            "user_id": ADMIN_ID,
+            "status": "forwarded",
+        })
+    assert response.status_code == 404
+
+
+# ── GET /reports?shelterId ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_reports_filtered_by_shelter_id(async_client):
+    """GET /reports?shelterId=X passes shelterId in the DB query and returns matching reports."""
+    sample = {
+        "_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0a9"),
+        "shelterId": SHELTER_ID,
+        "status": "pending",
+        "reportCategory": "access",
+    }
+    with patch("app.routes.reports.db") as mock_db:
+        mock_db.__getitem__.return_value.find.return_value.sort.return_value = (
+            make_async_iter([sample])
+        )
+        response = await async_client.get(f"/reports?shelterId={SHELTER_ID}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 1
+    # Verify the query that reached MongoDB contained the shelterId filter
+    query = mock_db.__getitem__.return_value.find.call_args.args[0]
+    assert query.get("shelterId") == SHELTER_ID
+    assert data["reports"][0]["shelterId"] == SHELTER_ID

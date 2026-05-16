@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from math import radians, sin, cos, asin, sqrt
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from bson import ObjectId
 from app.core.database import db
@@ -99,14 +99,23 @@ async def create_report(body: ReportCreate):
         "isVerified": is_verified,
     }
 
+    if body.reportType == "locked" and not is_verified:
+        raise HTTPException(
+            status_code=400,
+            detail="You must be near the shelter to report it as locked",
+        )
+
     result = await db["Report"].insert_one(report)
     return {"message": "Report submitted successfully", "reportId": str(result.inserted_id)}
 
 
 @router.get("")
-async def get_reports():
+async def get_reports(shelterId: Optional[str] = Query(None)):
+    query: dict = {}
+    if shelterId:
+        query["shelterId"] = shelterId
     reports = []
-    async for r in db["Report"].find().sort("createdAt", -1):
+    async for r in db["Report"].find(query).sort("createdAt", -1):
         r["id"] = str(r["_id"])
         del r["_id"]
         reports.append(r)

@@ -42,6 +42,7 @@ type Shelter = {
 type Report = {
   id?: string;
   shelterId?: string;
+  userId?: string;
   reportCategory?: string;
   reportType?: string;
   description?: string;
@@ -302,6 +303,7 @@ export default function ShelterDashboard() {
   const [allReports, setAllReports] = useState<Report[]>([]);
   const [selectedShelter, setSelectedShelter] = useState<Shelter | null>(null);
   const [activeTab, setActiveTab] = useState<"active" | "history">("active");
+  const [activeStatusFilter, setActiveStatusFilter] = useState<"All" | "pending" | "forwarded">("All");
   const [doneInputs, setDoneInputs] = useState<Record<string, { resolvedAt: string; handledBy: string }>>({});
   const [statusMenuOpen, setStatusMenuOpen] = useState<string | null>(null);
 
@@ -430,6 +432,7 @@ export default function ShelterDashboard() {
   const openShelterDetail = (shelter: Shelter) => {
     setSelectedShelter(shelter);
     setActiveTab("active");
+    setActiveStatusFilter("All");
     setDoneInputs({});
   };
 
@@ -487,22 +490,26 @@ export default function ShelterDashboard() {
   }, [allReports]);
 
   const shelterOverrides = useMemo(() => {
-    const accessCnt: Record<string, number> = {};
-    const petCnt:    Record<string, number> = {};
-    const cleanCnt:  Record<string, number> = {};
+    const accessCnt:  Record<string, number>      = {};
+    const petCnt:     Record<string, number>      = {};
+    const cleanUsers: Record<string, Set<string>> = {};
     allReports.forEach((r) => {
       if (!r.shelterId || r.status === "done") return;
-      if (r.reportCategory === "access")      accessCnt[r.shelterId] = (accessCnt[r.shelterId] || 0) + 1;
-      if (r.reportCategory === "pet_issue")   petCnt[r.shelterId]    = (petCnt[r.shelterId]    || 0) + 1;
-      if (r.reportCategory === "cleanliness") cleanCnt[r.shelterId]  = (cleanCnt[r.shelterId]  || 0) + 1;
+      if (r.reportCategory === "access")    accessCnt[r.shelterId] = (accessCnt[r.shelterId] || 0) + 1;
+      if (r.reportCategory === "pet_issue") petCnt[r.shelterId]    = (petCnt[r.shelterId]    || 0) + 1;
+      if (r.reportCategory === "cleanliness") {
+        if (!cleanUsers[r.shelterId]) cleanUsers[r.shelterId] = new Set();
+        // Use userId as the unique key; fall back to report id so anonymous reports still count
+        cleanUsers[r.shelterId].add(r.userId || r.id || "unknown");
+      }
     });
     const result: Record<string, { accessStatus?: string; petIssueReported?: boolean; cleanlinessStatus?: string }> = {};
-    const ids = new Set([...Object.keys(accessCnt), ...Object.keys(petCnt), ...Object.keys(cleanCnt)]);
+    const ids = new Set([...Object.keys(accessCnt), ...Object.keys(petCnt), ...Object.keys(cleanUsers)]);
     ids.forEach((id) => {
       result[id] = {
-        ...(accessCnt[id] >= 1 ? { accessStatus: "locked" }     : {}),
-        ...(petCnt[id]    >= 1 ? { petIssueReported: true }     : {}),
-        ...(cleanCnt[id]  >= 2 ? { cleanlinessStatus: "dirty" } : {}),
+        ...(accessCnt[id]              >= 1 ? { accessStatus: "locked" }     : {}),
+        ...(petCnt[id]                 >= 1 ? { petIssueReported: true }     : {}),
+        ...((cleanUsers[id]?.size ?? 0) >= 2 ? { cleanlinessStatus: "dirty" } : {}),
       };
     });
     return result;
@@ -551,18 +558,17 @@ export default function ShelterDashboard() {
   }, [shelters, search, chips, status, shelterOverrides, lastReportByShelterId]);
 
   const totalCount = filtered.filter((s) => s.isVisibleOnMap).length;
-  const openCount = filtered.filter(
-    (s) =>
-      s.isActive &&
-      s.shouldBeOpen &&
-      (s.accessStatus === "open" || s.accessStatus === "unknown"),
-  ).length;
+  const openCount = filtered.filter((s) => {
+    const ov = shelterOverrides[s.id || ""] || {};
+    const effectiveStatus = ov.accessStatus ?? s.accessStatus;
+    return s.isActive && s.shouldBeOpen && (effectiveStatus === "open" || effectiveStatus === "unknown");
+  }).length;
   const fullCount = filtered.filter((s) => s.isActive && s.isFull).length;
-  const closedCount = filtered.filter(
-    (s) =>
-      (s.isActive && s.shouldBeOpen && s.accessStatus === "locked") ||
-      !s.shouldBeOpen,
-  ).length;
+  const closedCount = filtered.filter((s) => {
+    const ov = shelterOverrides[s.id || ""] || {};
+    const effectiveStatus = ov.accessStatus ?? s.accessStatus;
+    return (s.isActive && s.shouldBeOpen && effectiveStatus === "locked") || !s.shouldBeOpen;
+  }).length;
 
   const shelterReports = useMemo(
     () => allReports.filter((r) => r.shelterId === selectedShelter?.id),
@@ -571,7 +577,11 @@ export default function ShelterDashboard() {
 
   const activeReports = shelterReports.filter((r) => r.status !== "done" && !r.resolvedAt);
   const historyReports = shelterReports.filter((r) => r.status === "done" && !!r.resolvedAt);
-  const tabReports = activeTab === "active" ? activeReports : historyReports;
+  const filteredActiveReports =
+    activeStatusFilter === "All"
+      ? activeReports
+      : activeReports.filter((r) => r.status === activeStatusFilter);
+  const tabReports = activeTab === "active" ? filteredActiveReports : historyReports;
 
   return (
     <View style={[s.container, { paddingTop: Math.max(0, insets.top - 10) }]}>
@@ -1013,6 +1023,23 @@ export default function ShelterDashboard() {
             </TouchableOpacity>
           </View>
 
+          {/* Active status filter */}
+          {activeTab === "active" && (
+            <View style={md.filterRow}>
+              {(["All", "pending", "forwarded"] as const).map((f) => (
+                <TouchableOpacity
+                  key={f}
+                  style={[md.filterBtn, activeStatusFilter === f && md.filterBtnOn]}
+                  onPress={() => setActiveStatusFilter(f)}
+                >
+                  <Text style={[md.filterBtnTxt, activeStatusFilter === f && md.filterBtnTxtOn]}>
+                    {f === "All" ? "All" : STATUS_LABELS[f]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
           {/* Reports list */}
           {tabReports.length === 0 ? (
             <Text style={md.empty}>No reports</Text>
@@ -1305,6 +1332,25 @@ const md = StyleSheet.create({
   tabTxt: { color: "#888", fontSize: 15, fontWeight: "500" },
   tabTxtOn: { color: "#BA7517" },
   empty: { color: "#666", textAlign: "center", padding: 40, fontSize: 16 },
+  filterRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#2a2a2a",
+  },
+  filterBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 0.5,
+    borderColor: "#333",
+    backgroundColor: "#242424",
+  },
+  filterBtnOn: { borderColor: "#BA7517", backgroundColor: "#BA751722" },
+  filterBtnTxt: { color: "#888", fontSize: 13, fontWeight: "500" },
+  filterBtnTxtOn: { color: "#BA7517", fontWeight: "600" },
   reportsList: { padding: 16, gap: 14 },
   reportCard: {
     backgroundColor: "#242424",
