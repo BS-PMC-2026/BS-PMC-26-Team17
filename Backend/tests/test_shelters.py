@@ -373,6 +373,40 @@ async def test_update_shelter_not_found(async_client):
     assert response.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_update_shelter_access_status_open(async_client):
+    """PATCH with accessStatus=open succeeds and the correct value reaches the DB."""
+    db, shelter_coll = build_shelters_db_mock(
+        user={"_id": ObjectId(ADMIN_ID), "role": "admin"},
+    )
+    with patch("app.routes.shelters.db", db):
+        response = await async_client.patch(f"/shelters/{SHELTER_OID}", json={
+            "user_id": ADMIN_ID,
+            "accessStatus": "open",
+        })
+    assert response.status_code == 200
+    assert response.json()["message"] == "Shelter updated"
+    updates = shelter_coll.update_one.call_args.args[1]["$set"]
+    assert updates.get("accessStatus") == "open"
+
+
+@pytest.mark.asyncio
+async def test_update_shelter_should_be_open_false(async_client):
+    """PATCH with shouldBeOpen=False succeeds and the correct value reaches the DB."""
+    db, shelter_coll = build_shelters_db_mock(
+        user={"_id": ObjectId(ADMIN_ID), "role": "admin"},
+    )
+    with patch("app.routes.shelters.db", db):
+        response = await async_client.patch(f"/shelters/{SHELTER_OID}", json={
+            "user_id": ADMIN_ID,
+            "shouldBeOpen": False,
+        })
+    assert response.status_code == 200
+    assert response.json()["message"] == "Shelter updated"
+    updates = shelter_coll.update_one.call_args.args[1]["$set"]
+    assert updates.get("shouldBeOpen") is False
+
+
 # ── DELETE /shelters/{shelter_id} ────────────────────────────────────────────
 
 @pytest.mark.asyncio
