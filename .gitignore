@@ -8,3 +8,7 @@ Backend/.env
 **/debug_*.png
 **/debug_*.html
 **/debug_*.jpg
+
+# Node / auto-generated caches
+node_modules/
+*/node_modules/

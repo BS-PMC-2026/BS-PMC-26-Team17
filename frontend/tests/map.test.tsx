@@ -16,6 +16,25 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
 }));
 
+// AsyncStorage is used by the map to load the user's home / radius settings.
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  getItem: jest.fn(() => Promise.resolve(null)),
+  setItem: jest.fn(() => Promise.resolve()),
+  removeItem: jest.fn(() => Promise.resolve()),
+}));
+
+// useFocusEffect is invoked when the map gains focus to refresh the home circle.
+// In tests we just no-op it — the relevant settings loading is exercised
+// indirectly through the AsyncStorage mock above.
+jest.mock('@react-navigation/native', () => ({
+  useFocusEffect: jest.fn(),
+}));
+
+// Auth context isn't relevant to the map's rendering tests, so stub it out.
+jest.mock('@/context/auth', () => ({
+  useAuth: () => ({ user: null }),
+}));
+
 const mockAnimateToRegion = jest.fn();
 
 jest.mock('react-native-maps', () => {
@@ -38,16 +57,19 @@ jest.mock('react-native-maps', () => {
     __esModule: true,
     default: MockMapView,
     Marker: MockMarker,
+    // The home-radius circle is just visual — render nothing in tests.
+    Circle: () => null,
     PROVIDER_DEFAULT: null,
   };
 });
 
-// Silence console.error from the (intentional) "Failed to load shelters" path
+// Silence console.error / console.warn from intentional error paths
 beforeAll(() => {
   jest.spyOn(console, 'error').mockImplementation(() => {});
+  jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const mockLocation = Location as jest.Mocked<typeof Location>;
 
@@ -60,6 +82,28 @@ const grantLocation = (lat = 32.08, lng = 34.78) => {
 
 const tapMap = (element: any, lat = 31.5, lng = 34.8) =>
   fireEvent.press(element, { nativeEvent: { coordinate: { latitude: lat, longitude: lng } } });
+
+// Returns a fetch mock whose responses cycle through the provided list.
+// The last entry repeats for any extra calls.
+const makeFetchSequence = (...responses: any[]) => {
+  let i = 0;
+  return jest.fn(() => {
+    const body = responses[Math.min(i++, responses.length - 1)];
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response);
+  });
+};
+
+// Shorthand: shelters load returns the given list, all other calls fail gracefully.
+const makeFetchWithShelters = (shelters: any[]) =>
+  makeFetchSequence({ shelters, count: shelters.length });
+
+// A single shelter fixture used across search tests
+const SHELTER_A = {
+  lat: 31.25, lng: 34.79,
+  name: 'מקלט גן העצמאות',
+  address: 'רחוב הרצל 1',
+  accessStatus: 'open',
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -120,7 +164,7 @@ describe('MapScreen', () => {
     await act(async () => {
       tapMap(getByTestId('map-view'));
     });
-    expect(getByText(/Navigate Here/i)).toBeTruthy();
+    expect(getByText(/Navigate/i)).toBeTruthy();
   });
 
   // 6 ── Panel shows the address (falls back to coords if no reverse geocode result)
@@ -144,7 +188,7 @@ describe('MapScreen', () => {
     await act(async () => {
       tapMap(getByTestId('map-view'), 31.5, 34.8);
     });
-    fireEvent.press(getByText(/Navigate Here/i));
+    fireEvent.press(getByText(/Navigate/i));
     expect(router.push).toHaveBeenCalledWith(expect.stringContaining('lat=31.5'));
     expect(router.push).toHaveBeenCalledWith(expect.stringContaining('lng=34.8'));
   });
@@ -157,9 +201,9 @@ describe('MapScreen', () => {
     await act(async () => {
       tapMap(getByTestId('map-view'));
     });
-    expect(getByText(/Navigate Here/i)).toBeTruthy();
+    expect(getByText(/Navigate/i)).toBeTruthy();
     fireEvent.press(getByText('✕'));
-    expect(queryByText(/Navigate Here/i)).toBeNull();
+    expect(queryByText(/Navigate/i)).toBeNull();
     expect(queryByTestId('tap-marker')).toBeNull();
   });
 
@@ -184,6 +228,178 @@ describe('MapScreen', () => {
     fireEvent.press(getByText('📍'));
     expect(mockAnimateToRegion).toHaveBeenCalledWith(
       { latitude: 32.08, longitude: 34.78, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+      500,
+    );
+  });
+});
+
+// ─── Search feature edge cases ────────────────────────────────────────────────
+
+describe('Search feature', () => {
+
+  // 11 ── Exact shelter name → panel opens with shelter info
+  it('searching by exact shelter name opens the shelter panel', async () => {
+    global.fetch = makeFetchWithShelters([SHELTER_A]);
+    grantLocation();
+    const { getByTestId, findByText } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    fireEvent.changeText(getByTestId('search-input'), 'מקלט גן העצמאות');
+    await act(async () => { fireEvent.press(getByTestId('search-button')); });
+
+    expect(await findByText('מקלט גן העצמאות')).toBeTruthy();
+    expect(mockAnimateToRegion).toHaveBeenCalledWith(
+      expect.objectContaining({ latitude: 31.25, longitude: 34.79 }),
+      500,
+    );
+  });
+
+  // 12 ── Partial match (substring) → still finds the shelter
+  it('partial name match finds the shelter', async () => {
+    global.fetch = makeFetchWithShelters([SHELTER_A]);
+    grantLocation();
+    const { getByTestId, findByText } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    fireEvent.changeText(getByTestId('search-input'), 'גן העצמאות');
+    await act(async () => { fireEvent.press(getByTestId('search-button')); });
+
+    expect(await findByText('מקלט גן העצמאות')).toBeTruthy();
+  });
+
+  // 13 ── Search by shelter address → finds the shelter (not Nominatim)
+  it('searching by shelter address opens the shelter panel without calling Nominatim', async () => {
+    global.fetch = makeFetchWithShelters([SHELTER_A]);
+    grantLocation();
+    const { getByTestId, findByText } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    fireEvent.changeText(getByTestId('search-input'), 'הרצל 1');
+    await act(async () => { fireEvent.press(getByTestId('search-button')); });
+
+    expect(await findByText('מקלט גן העצמאות')).toBeTruthy();
+    // Only one fetch call (shelters load) — Nominatim was never called
+    expect((global.fetch as jest.Mock).mock.calls.length).toBe(1);
+  });
+
+  // 14 ── No shelter match → falls back to Nominatim and shows address pin
+  it('when no shelter matches, falls back to Nominatim and shows a pin', async () => {
+    global.fetch = makeFetchSequence(
+      { shelters: [SHELTER_A], count: 1 },          // shelters load
+      [{ lat: '32.0', lon: '34.9', display_name: 'תל אביב, ישראל' }], // Nominatim
+    );
+    grantLocation();
+    const { getByTestId, findByText } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    fireEvent.changeText(getByTestId('search-input'), 'תל אביב'); // not a shelter name
+    await act(async () => { fireEvent.press(getByTestId('search-button')); });
+
+    expect(await findByText('תל אביב, ישראל')).toBeTruthy();
+    expect(mockAnimateToRegion).toHaveBeenCalledWith(
+      expect.objectContaining({ latitude: 32.0, longitude: 34.9 }),
+      500,
+    );
+  });
+
+  // 15 ── Empty / whitespace-only query → does nothing
+  it('empty or whitespace search query does nothing', async () => {
+    grantLocation();
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    fireEvent.changeText(getByTestId('search-input'), '   ');
+    await act(async () => { fireEvent.press(getByTestId('search-button')); });
+
+    expect(mockAnimateToRegion).not.toHaveBeenCalled();
+  });
+
+  // 16 ── Nominatim returns empty array → no crash, no pin, no panel
+  it('Nominatim returning no results does not crash or show a pin', async () => {
+    global.fetch = makeFetchSequence(
+      { shelters: [], count: 0 }, // shelters load
+      [],                         // Nominatim returns nothing
+    );
+    grantLocation();
+    const { getByTestId, queryByText } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    fireEvent.changeText(getByTestId('search-input'), 'כתובת לא קיימת');
+    await act(async () => { fireEvent.press(getByTestId('search-button')); });
+
+    expect(mockAnimateToRegion).not.toHaveBeenCalled();
+    expect(queryByText(/Navigate/i)).toBeNull();
+    expect(getByTestId('map-view')).toBeTruthy(); // map still visible
+  });
+
+  // 17 ── Nominatim network error → no crash
+  it('Nominatim network error does not crash the app', async () => {
+    let call = 0;
+    global.fetch = jest.fn(() => {
+      call++;
+      if (call === 1)
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ shelters: [], count: 0 }) } as Response);
+      return Promise.reject(new Error('Network error'));
+    });
+    grantLocation();
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    fireEvent.changeText(getByTestId('search-input'), 'כתובת לא קיימת');
+    await act(async () => { fireEvent.press(getByTestId('search-button')); });
+
+    expect(getByTestId('map-view')).toBeTruthy(); // map still there, no throw
+  });
+
+  // 18 ── Pressing Enter triggers search (same as tapping the button)
+  it('pressing Enter on the search input triggers the search', async () => {
+    global.fetch = makeFetchWithShelters([SHELTER_A]);
+    grantLocation();
+    const { getByTestId, findByText } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    fireEvent.changeText(getByTestId('search-input'), 'גן העצמאות');
+    await act(async () => { fireEvent(getByTestId('search-input'), 'submitEditing'); });
+
+    expect(await findByText('מקלט גן העצמאות')).toBeTruthy();
+  });
+
+  // 19 ── ✕ button clears the search input and the pin
+  it('✕ button clears the search input and removes the address pin', async () => {
+    global.fetch = makeFetchSequence(
+      { shelters: [], count: 0 },
+      [{ lat: '32.0', lon: '34.9', display_name: 'תל אביב, ישראל' }],
+    );
+    grantLocation();
+    const { getByTestId, findByText, queryByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    // Search for an address so Nominatim places a pin
+    fireEvent.changeText(getByTestId('search-input'), 'תל אביב');
+    await act(async () => { fireEvent.press(getByTestId('search-button')); });
+    expect(await findByText('תל אביב, ישראל')).toBeTruthy();
+
+    // Press ✕ in the search bar — should clear everything
+    fireEvent.press(getByTestId('search-clear'));
+    expect(getByTestId('search-input').props.value).toBe('');
+    expect(queryByTestId('tap-marker')).toBeNull();
+  });
+
+  // 20 ── Multiple shelters: picks the first match
+  it('with multiple shelters, the first name match is selected', async () => {
+    const shelterB = { lat: 31.3, lng: 34.8, name: 'מקלט גן לאומי', address: 'רחוב 2' };
+    global.fetch = makeFetchWithShelters([SHELTER_A, shelterB]);
+    grantLocation();
+    const { getByTestId, findByText } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-view'));
+
+    fireEvent.changeText(getByTestId('search-input'), 'מקלט גן העצמאות');
+    await act(async () => { fireEvent.press(getByTestId('search-button')); });
+
+    // Should open panel for SHELTER_A specifically, not shelterB
+    expect(await findByText('מקלט גן העצמאות')).toBeTruthy();
+    expect(mockAnimateToRegion).toHaveBeenCalledWith(
+      expect.objectContaining({ latitude: 31.25, longitude: 34.79 }),
       500,
     );
   });

@@ -9,6 +9,7 @@ import {
   Animated,
   Dimensions,
   Alert,
+  TextInput,
 } from "react-native";
 import { useAuth } from "@/context/auth";
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from "react-native-maps";
@@ -85,11 +86,11 @@ export default function MapScreen() {
   } | null>(null);
   const [pin, setPin] = useState<Pin | null>(null);
   const [shelterPins, setShelterPins] = useState<ShelterPin[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searching, setSearching] = useState(false);
   const [selectedShelter, setSelectedShelter] = useState<ShelterPin | null>(
     null,
   );
-  // Marker tracking: true on first render so pins paint, then flip to false for perf
-  const [tracksChanges, setTracksChanges] = useState(true);
   // Current visible map region — used for viewport culling
   const [visibleRegion, setVisibleRegion] = useState(ISRAEL_REGION);
   // Home "do not notify" circle — loaded from settings (AsyncStorage)
@@ -135,8 +136,6 @@ export default function MapScreen() {
           // Skip shelters without coords — never geocode (causes memory pressure on iOS)
         }
         setShelterPins(pins);
-        // After markers paint, disable tracking for performance
-        setTimeout(() => setTracksChanges(false), 800);
       } catch (e) {
         console.error("Failed to load shelters:", e);
       }
@@ -238,6 +237,57 @@ export default function MapScreen() {
       });
     }
   };
+
+  // ── Address search — first tries shelter names, then Nominatim ──────
+  const searchAddress = useCallback(async () => {
+    const q = searchQuery.trim();
+    if (!q) return;
+    setSearching(true);
+    setSelectedShelter(null);
+    setPin(null);
+
+    // 1. Search loaded shelter names (case-insensitive, partial match)
+    const lower = q.toLowerCase();
+    const matched = shelterPins.find(sh =>
+      sh.name.toLowerCase().includes(lower) ||
+      (sh.address && sh.address.toLowerCase().includes(lower))
+    );
+    if (matched) {
+      mapRef.current?.animateToRegion(
+        { latitude: matched.latitude, longitude: matched.longitude, latitudeDelta: 0.005, longitudeDelta: 0.005 },
+        500
+      );
+      setSelectedShelter(matched);
+      setSearching(false);
+      return;
+    }
+
+    // 2. Fall back to Nominatim address geocoding
+    try {
+      const locationBias = userLocation
+        ? `&viewbox=${userLocation.longitude - 0.1},${userLocation.latitude + 0.1},${userLocation.longitude + 0.1},${userLocation.latitude - 0.1}&bounded=0`
+        : '';
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=il${locationBias}`,
+        { headers: { 'Accept-Language': 'he' } }
+      );
+      const data = await res.json();
+      if (data.length > 0) {
+        const { lat, lon, display_name } = data[0];
+        const latitude  = parseFloat(lat);
+        const longitude = parseFloat(lon);
+        mapRef.current?.animateToRegion(
+          { latitude, longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+          500
+        );
+        setPin({ latitude, longitude, name: display_name });
+      }
+    } catch (e) {
+      console.warn('Search failed:', e);
+    } finally {
+      setSearching(false);
+    }
+  }, [searchQuery, userLocation, shelterPins]);
 
   const navigateToPin = () => {
     if (!pin) return;
@@ -376,39 +426,49 @@ export default function MapScreen() {
     setPin(null);
   }, []);
 
-  // Viewport culling — only show shelters in the visible region.
-  // Caps at MAX_VISIBLE so even if you zoom way out we never render hundreds.
-  const MAX_VISIBLE = 60;
+  // Viewport culling — only render shelters visible on screen.
+  // All shelters are loaded from the DB; this just limits what's rendered.
+  const MAX_VISIBLE = 30;
+  const ZOOM_THRESHOLD = 0.15; // latitudeDelta above this = too zoomed out
+
   const visibleShelters = useMemo(() => {
+    // Zoom gate: don't render any markers when too far out
+    if (visibleRegion.latitudeDelta > ZOOM_THRESHOLD) return [];
+
     const latMin = visibleRegion.latitude  - visibleRegion.latitudeDelta  / 2;
     const latMax = visibleRegion.latitude  + visibleRegion.latitudeDelta  / 2;
     const lngMin = visibleRegion.longitude - visibleRegion.longitudeDelta / 2;
     const lngMax = visibleRegion.longitude + visibleRegion.longitudeDelta / 2;
-    const inView: ShelterPin[] = [];
-    for (const sh of shelterPins) {
-      if (
-        sh.latitude  >= latMin && sh.latitude  <= latMax &&
-        sh.longitude >= lngMin && sh.longitude <= lngMax
-      ) {
-        inView.push(sh);
-        if (inView.length >= MAX_VISIBLE) break;
-      }
-    }
-    return inView;
-  }, [shelterPins, visibleRegion]);
 
-  // Memoize markers based on the culled list
+    const inView = shelterPins.filter(sh =>
+      sh.latitude  >= latMin && sh.latitude  <= latMax &&
+      sh.longitude >= lngMin && sh.longitude <= lngMax
+    );
+
+    // When over the cap, prioritise shelters closest to the user
+    if (inView.length > MAX_VISIBLE && userLocation) {
+      inView.sort((a, b) => {
+        const dA = (a.latitude - userLocation.latitude) ** 2 + (a.longitude - userLocation.longitude) ** 2;
+        const dB = (b.latitude - userLocation.latitude) ** 2 + (b.longitude - userLocation.longitude) ** 2;
+        return dA - dB;
+      });
+    }
+
+    return inView.slice(0, MAX_VISIBLE);
+  }, [shelterPins, visibleRegion, userLocation]);
+
+  // Memoize markers — stable key (no index) so markers aren't recreated on pan
   const shelterMarkers = useMemo(
     () =>
-      visibleShelters.map((sh, i) => (
+      visibleShelters.map((sh) => (
         <ShelterMarker
-          key={`shelter-${sh.latitude}-${sh.longitude}-${i}`}
+          key={`shelter-${sh.latitude}-${sh.longitude}`}
           sh={sh}
+          color={getShelterColor(sh)}
           onPress={handleMarkerPress}
-          tracksChanges={tracksChanges}
         />
       )),
-    [visibleShelters, handleMarkerPress, tracksChanges],
+    [visibleShelters, handleMarkerPress],
   );
 
   if (loading) {
@@ -454,6 +514,37 @@ export default function MapScreen() {
         {/* Shelter markers (memoized so they don't re-render on every state change) */}
         {shelterMarkers}
       </MapView>
+
+      {/* Zoom-out hint — shown when too far out to display markers */}
+      {visibleRegion.latitudeDelta > ZOOM_THRESHOLD && (
+        <View style={styles.zoomHint} pointerEvents="none">
+          <Text style={styles.zoomHintText}>🔍 Zoom in to see shelters</Text>
+        </View>
+      )}
+
+      {/* Search bar */}
+      <View style={styles.searchBar} testID="search-bar">
+        <TextInput
+          style={styles.searchInput}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search address..."
+          placeholderTextColor="#999"
+          returnKeyType="search"
+          onSubmitEditing={searchAddress}
+          testID="search-input"
+        />
+        {searchQuery.length > 0 && !searching && (
+          <TouchableOpacity onPress={() => { setSearchQuery(''); setPin(null); }} style={styles.searchClear} testID="search-clear">
+            <Text style={styles.searchClearText}>✕</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={styles.searchBtn} onPress={searchAddress} disabled={searching} testID="search-button">
+          {searching
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <Text style={styles.searchBtnText}>🔍</Text>}
+        </TouchableOpacity>
+      </View>
 
       {/* Location button */}
       {locationGranted && (
@@ -654,32 +745,69 @@ const ShelterPanel = memo(function ShelterPanel({
   );
 });
 
+// ── Background color logic — separate feature ────────────────────────
+// Intentionally isolated so the color feature can be changed independently
+// from the marker icon design.
+// TODO: replace with real color logic when the color feature is implemented.
+function getShelterColor(_sh: ShelterPin): string {
+  return '#1D9E75'; // uniform until color feature is implemented
+}
+
+// ── Marker icon design — separate from color ─────────────────────────
 const ShelterMarker = memo(function ShelterMarker({
   sh,
+  color,
   onPress,
-  tracksChanges,
 }: {
   sh: ShelterPin;
+  color: string;
   onPress: (sh: ShelterPin) => void;
-  tracksChanges: boolean;
 }) {
-  const color = sh.isFull
-    ? "#E24B4A"
-    : sh.accessStatus === "closed" || sh.accessStatus === "locked"
-      ? "#888780"
-      : "#1D9E75";
+  const icon = '🏠';
+
   return (
     <Marker
       coordinate={{ latitude: sh.latitude, longitude: sh.longitude }}
-      pinColor={color}
-      tracksViewChanges={tracksChanges}
+      tracksViewChanges={false}
       stopPropagation
-      onPress={(e) => {
-        e.stopPropagation?.();
-        onPress(sh);
-      }}
-    />
+      anchor={{ x: 0.5, y: 1 }}
+      onPress={(e) => { e.stopPropagation?.(); onPress(sh); }}
+    >
+      <View style={[mk.wrap, { backgroundColor: color }]}>
+        <Text style={mk.icon}>{icon}</Text>
+      </View>
+      <View style={[mk.tip, { borderTopColor: color }]} />
+    </Marker>
   );
+});
+
+// Marker bubble styles — kept outside component so they never recreate
+const mk = StyleSheet.create({
+  wrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  icon: { fontSize: 16 },
+  tip: {
+    width: 0,
+    height: 0,
+    alignSelf: 'center',
+    borderLeftWidth: 6,
+    borderRightWidth: 6,
+    borderTopWidth: 8,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+  },
 });
 
 const DataRow = memo(function DataRow({
@@ -702,6 +830,41 @@ const DataRow = memo(function DataRow({
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
+
+  searchBar: {
+    position: 'absolute',
+    top: 54,
+    left: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 6,
+    zIndex: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#222',
+    paddingVertical: 6,
+  },
+  searchClear: { paddingHorizontal: 8 },
+  searchClearText: { fontSize: 15, color: '#aaa' },
+  searchBtn: {
+    backgroundColor: '#1a73e8',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginLeft: 6,
+  },
+  searchBtnText: { fontSize: 16 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   loadingText: { marginTop: 12, color: "#666" },
 
@@ -785,6 +948,18 @@ const styles = StyleSheet.create({
     borderColor: "#E24B4A",
   },
   reportBtnText: { color: "#E24B4A", fontSize: 16, fontWeight: "700" },
+
+  // Zoom-out hint bar
+  zoomHint: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(50,50,50,0.75)',
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  zoomHintText: { color: '#fff', fontSize: 14, fontWeight: '500' },
 
   // Tap-outside backdrop for the modal panel
   modalBackdrop: { flex: 1, backgroundColor: 'transparent' },
