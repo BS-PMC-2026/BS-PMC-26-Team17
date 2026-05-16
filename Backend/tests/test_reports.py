@@ -1,0 +1,309 @@
+"""Tests for the report submission endpoint (POST /reports) and listing (GET /reports).
+
+The handler does three notable things we need to verify:
+1. Inserts a report document with a sequential `number` and the right shape.
+2. Computes `isVerified` based on haversine distance between the reporter
+   and the shelter (true if within 50m).
+3. Populates `reporterNumber` from the User collection by `userId`, falling
+   back to the value sent in the request body if the user isn't found.
+"""
+
+import pytest
+from unittest.mock import patch, MagicMock, AsyncMock
+from bson import ObjectId
+
+
+# A real-looking ObjectId we can hand back from inserts
+INSERTED_ID = ObjectId("65a1b2c3d4e5f6a7b8c9d0e1")
+SHELTER_ID = "65a1b2c3d4e5f6a7b8c9d0e2"
+USER_ID = "65a1b2c3d4e5f6a7b8c9d0e3"
+
+
+def make_async_iter(items):
+    class AsyncIter:
+        def __init__(self, data):
+            self._iter = iter(data)
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration:
+                raise StopAsyncIteration
+    return AsyncIter(items)
+
+
+def build_db_mock(*, shelter=None, user=None, report_count=0):
+    """Build a db mock that returns different collection mocks per name.
+
+    - `db["Report"]` supports count_documents and insert_one
+    - `db["ShelterTest"]` supports find_one (returns the given shelter)
+    - `db["User"]` supports find_one (returns the given user)
+    """
+    report_coll = MagicMock()
+    report_coll.count_documents = AsyncMock(return_value=report_count)
+    report_coll.insert_one = AsyncMock(return_value=MagicMock(inserted_id=INSERTED_ID))
+
+    shelter_coll = MagicMock()
+    shelter_coll.find_one = AsyncMock(return_value=shelter)
+
+    user_coll = MagicMock()
+    user_coll.find_one = AsyncMock(return_value=user)
+
+    def get_collection(name):
+        return {
+            "Report": report_coll,
+            "ShelterTest": shelter_coll,
+            "User": user_coll,
+        }[name]
+
+    db = MagicMock()
+    db.__getitem__.side_effect = get_collection
+    return db, report_coll
+
+
+def base_body(**overrides):
+    body = {
+        "shelterId": SHELTER_ID,
+        "userId": USER_ID,
+        "reportCategory": "access",
+        "reportType": "closed",
+        "description": "Door was locked",
+        "reporterLat": 32.0853,
+        "reporterLng": 34.7818,
+        "reporterNumber": "0500000000",
+        "callbackNumber": "0511111111",
+    }
+    body.update(overrides)
+    return body
+
+
+# ── Happy path ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_create_report_returns_success(async_client):
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db):
+        response = await async_client.post("/reports", json=base_body())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["message"] == "Report submitted successfully"
+    assert data["reportId"] == str(INSERTED_ID)
+
+
+@pytest.mark.asyncio
+async def test_report_document_has_expected_shape(async_client):
+    db, report_coll = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+        report_count=4,
+    )
+    with patch("app.routes.reports.db", db):
+        await async_client.post("/reports", json=base_body())
+
+    # Grab the document we attempted to insert
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["number"] == 5  # count + 1
+    assert inserted["shelterId"] == SHELTER_ID
+    assert inserted["userId"] == USER_ID
+    assert inserted["reportCategory"] == "access"
+    assert inserted["reportType"] == "closed"
+    assert inserted["description"] == "Door was locked"
+    assert inserted["status"] == "pending"
+    assert inserted["forwardedAt"] is None
+    assert inserted["resolvedAt"] is None
+    assert inserted["handledBy"] is None
+    assert "createdAt" in inserted
+    assert "isVerified" in inserted
+
+
+# ── isVerified logic ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_is_verified_true_when_reporter_within_50m(async_client):
+    # Reporter at the exact same point as the shelter → distance 0
+    db, report_coll = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db):
+        await async_client.post("/reports", json=base_body(
+            reporterLat=32.0853, reporterLng=34.7818,
+        ))
+
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["isVerified"] is True
+
+
+@pytest.mark.asyncio
+async def test_is_verified_false_when_reporter_far_from_shelter(async_client):
+    # Shelter in Tel Aviv, reporter ~520m north — well beyond the 50m threshold
+    db, report_coll = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db):
+        await async_client.post("/reports", json=base_body(
+            reporterLat=32.0900, reporterLng=34.7818,
+        ))
+
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["isVerified"] is False
+
+
+@pytest.mark.asyncio
+async def test_is_verified_false_when_reporter_coords_missing(async_client):
+    db, report_coll = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db):
+        await async_client.post("/reports", json=base_body(
+            reporterLat=None, reporterLng=None,
+        ))
+
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["isVerified"] is False
+
+
+@pytest.mark.asyncio
+async def test_is_verified_false_when_shelter_has_no_coords(async_client):
+    # Shelter exists but has no lat/lng fields → cannot compute distance
+    db, report_coll = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "name": "Shelter without coords"},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db):
+        await async_client.post("/reports", json=base_body())
+
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["isVerified"] is False
+
+
+@pytest.mark.asyncio
+async def test_is_verified_false_when_shelter_not_found(async_client):
+    db, report_coll = build_db_mock(
+        shelter=None,
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db):
+        await async_client.post("/reports", json=base_body())
+
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["isVerified"] is False
+
+
+# ── reporterNumber sourcing ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_reporter_number_pulled_from_user_table(async_client):
+    """The phone in the DB takes priority over whatever the client sent."""
+    db, report_coll = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db):
+        # Client sends a different (stale) number — the DB value should win
+        await async_client.post("/reports", json=base_body(reporterNumber="STALE"))
+
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["reporterNumber"] == "0521234567"
+
+
+@pytest.mark.asyncio
+async def test_reporter_number_falls_back_to_body_when_user_missing(async_client):
+    """If no user is found, fall back to what the client sent so we don't
+    silently drop the reporter's phone."""
+    db, report_coll = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user=None,
+    )
+    with patch("app.routes.reports.db", db):
+        await async_client.post("/reports", json=base_body(reporterNumber="0599999999"))
+
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["reporterNumber"] == "0599999999"
+
+
+@pytest.mark.asyncio
+async def test_reporter_number_empty_when_user_missing_and_body_blank(async_client):
+    db, report_coll = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user=None,
+    )
+    with patch("app.routes.reports.db", db):
+        await async_client.post("/reports", json=base_body(reporterNumber=""))
+
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["reporterNumber"] == ""
+
+
+# ── Validation ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_missing_required_field_returns_422(async_client):
+    """FastAPI/Pydantic should reject a body that's missing shelterId."""
+    bad = base_body()
+    bad.pop("shelterId")
+    response = await async_client.post("/reports", json=bad)
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_empty_description_is_allowed(async_client):
+    db, report_coll = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db):
+        response = await async_client.post("/reports", json=base_body(description=""))
+    assert response.status_code == 200
+    inserted = report_coll.insert_one.call_args.args[0]
+    assert inserted["description"] == ""
+
+
+# ── GET /reports ────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_reports_returns_list(async_client):
+    sample = {
+        "_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0a9"),
+        "number": 1,
+        "shelterId": SHELTER_ID,
+        "userId": USER_ID,
+        "reportCategory": "access",
+        "reportType": "closed",
+        "status": "pending",
+        "isVerified": True,
+    }
+    with patch("app.routes.reports.db") as mock_db:
+        mock_db.__getitem__.return_value.find.return_value.sort.return_value = (
+            make_async_iter([sample])
+        )
+        response = await async_client.get("/reports")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "reports" in data
+    assert "count" in data
+    assert data["count"] == 1
+    # _id should be stringified
+    assert data["reports"][0]["_id"] == "65a1b2c3d4e5f6a7b8c9d0a9"
+
+
+@pytest.mark.asyncio
+async def test_get_reports_empty(async_client):
+    with patch("app.routes.reports.db") as mock_db:
+        mock_db.__getitem__.return_value.find.return_value.sort.return_value = (
+            make_async_iter([])
+        )
+        response = await async_client.get("/reports")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 0
+    assert data["reports"] == []

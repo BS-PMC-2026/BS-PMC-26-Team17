@@ -5,6 +5,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import SettingsScreen from '../app/(tabs)/settings';
 import { AuthProvider } from '../context/auth';
 
+// SettingsScreen uses useFocusEffect to refresh on focus. In a unit-test
+// environment there's no navigator, so we mock it to behave like useEffect
+// and just invoke the callback once on mount.
+jest.mock('@react-navigation/native', () => {
+  const React = require('react');
+  return {
+    useFocusEffect: (cb: () => void | (() => void)) => {
+      React.useEffect(() => {
+        const cleanup = cb();
+        return typeof cleanup === 'function' ? cleanup : undefined;
+      }, []);
+    },
+  };
+});
+
 jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(() => Promise.resolve(null)),
   setItem: jest.fn(() => Promise.resolve()),
@@ -13,11 +28,13 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 jest.spyOn(Alert, 'alert');
 
+// Address autocomplete hits Nominatim — return something benign so the
+// debounced fetch doesn't blow up in tests.
 global.fetch = jest.fn(() =>
   Promise.resolve({
     ok: true,
-    json: () => Promise.resolve({ status: 'success' }),
-  } as Response)
+    json: () => Promise.resolve([]),
+  } as Response),
 ) as jest.Mock;
 
 const renderWithAuth = (component: React.ReactElement) =>
@@ -28,85 +45,77 @@ describe('SettingsScreen Component', () => {
     jest.clearAllMocks();
   });
 
-  // TEST 1: Rendering and User Interaction
-  it('renders correctly and allows user to update the address', async () => {
-    const { getByText, getAllByText, getByPlaceholderText } = renderWithAuth(<SettingsScreen />);
+  // TEST 1: Rendering and address input — the autocompleting field accepts
+  // free text and reflects the typed value back in its `value` prop.
+  it('renders correctly and lets the user type into the address field', async () => {
+    const { getByText, getByPlaceholderText } = renderWithAuth(<SettingsScreen />);
 
-    // Check if the main header rendered
+    // Main header
     expect(getByText('Emergency Settings')).toBeTruthy();
 
-    // Press the first Edit button (address)
-    const editButtons = getAllByText('Edit');
-    fireEvent.press(editButtons[0]);
-
-    // Find the address input and simulate typing
-    const addressInput = getByPlaceholderText('Enter your full address');
+    // The address input now uses an autocomplete placeholder; no Edit button.
+    const addressInput = getByPlaceholderText('e.g., Herzl, Tel Aviv');
     fireEvent.changeText(addressInput, "123 Safe St, Be'er Sheva");
 
-    // The component should hold the new value in its state
+    // The TextInput is controlled — its value should reflect what we typed
     expect(addressInput.props.value).toBe("123 Safe St, Be'er Sheva");
   });
 
-  // TEST 2: Triggering the Save Function
+  // TEST 2: Save Preferences (the only save button now) writes to AsyncStorage
+  // and surfaces a success alert. No address typed → bypasses the
+  // "address not picked" confirmation path.
   it('saves settings to AsyncStorage and shows a success alert when Save Preferences is pressed', async () => {
-    const { getByText, getAllByText } = renderWithAuth(<SettingsScreen />);
+    const { getByText } = renderWithAuth(<SettingsScreen />);
 
-    // Press 'Driving' transport mode
-    const drivingButton = getByText('Driving');
-    fireEvent.press(drivingButton);
+    // Change a non-address field so we exercise some state mutation
+    fireEvent.press(getByText('Driving'));
 
-    // Press the main Save Preferences button
-    const saveButton = getByText('Save Preferences');
-    fireEvent.press(saveButton);
+    fireEvent.press(getByText('Save Preferences'));
 
-    // Verify the correct actions happened asynchronously
     await waitFor(() => {
-      // Check if AsyncStorage.setItem was called
       expect(AsyncStorage.setItem).toHaveBeenCalledWith(
         'userSettings',
-        expect.any(String)
+        expect.any(String),
       );
-
-      // Check if the success alert was shown to the user
-      expect(Alert.alert).toHaveBeenCalledWith('Success', 'Settings saved successfully.');
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Saved',
+        'Your preferences have been saved.',
+      );
     });
   });
 
-  // TEST 3: Radius validation - negative value
+  // TEST 3: Negative radius triggers validation BEFORE save runs.
+  // Alert title is "Invalid radius" (matches settings.tsx).
   it('shows error when radius is negative', async () => {
-    const { getAllByText, getByPlaceholderText } = renderWithAuth(<SettingsScreen />);
-
-    // Press the second Edit button (radius)
-    const editButtons = getAllByText('Edit');
-    fireEvent.press(editButtons[1]);
+    const { getByText, getByPlaceholderText } = renderWithAuth(<SettingsScreen />);
 
     const radiusInput = getByPlaceholderText('e.g., 500');
     fireEvent.changeText(radiusInput, '-10');
 
-    const saveButtons = getAllByText('Save');
-    fireEvent.press(saveButtons[0]);
+    fireEvent.press(getByText('Save Preferences'));
 
     await waitFor(() => {
-      expect(Alert.alert).toHaveBeenCalledWith('Invalid', 'Radius cannot be negative.');
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Invalid radius',
+        'Radius cannot be negative.',
+      );
     });
   });
 
-  // TEST 4: Radius validation - value too large
+  // TEST 4: Radius over 1500 also fails validation.
   it('shows error when radius exceeds 1500', async () => {
-    const { getAllByText, getByPlaceholderText } = renderWithAuth(<SettingsScreen />);
-
-    // Press the second Edit button (radius)
-    const editButtons = getAllByText('Edit');
-    fireEvent.press(editButtons[1]);
+    const { getByText, getByPlaceholderText } = renderWithAuth(<SettingsScreen />);
 
     const radiusInput = getByPlaceholderText('e.g., 500');
     fireEvent.changeText(radiusInput, '2000');
 
-    const saveButtons = getAllByText('Save');
-    fireEvent.press(saveButtons[0]);
+    fireEvent.press(getByText('Save Preferences'));
 
     await waitFor(() => {
-      expect(Alert.alert).toHaveBeenCalledWith('Invalid', 'Radius cannot be more than 1500 meters.');
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Invalid radius',
+        'Radius cannot be more than 1500 meters.',
+      );
     });
   });
 });

@@ -5,7 +5,6 @@ from bson import ObjectId
 from app.core.database import db
 
 router = APIRouter(prefix="/shelters", tags=["shelters"])
-reports_router = APIRouter(prefix="/reports", tags=["reports"])
 
 
 async def _is_admin(user_id: str) -> bool:
@@ -148,40 +147,3 @@ async def get_shelter_reports(shelter_id: str):
     return {"reports": reports, "count": len(reports)}
 
 
-class ReportUpdate(BaseModel):
-    user_id: str
-    status: Optional[str] = None
-    forwardedAt: Optional[str] = None
-    resolvedAt: Optional[str] = None
-    handledBy: Optional[str] = None
-
-
-@reports_router.get("")
-async def get_all_reports():
-    reports = []
-    async for report in db["Report"].find({}).sort("createdAt", -1):
-        report["id"] = str(report["_id"])
-        del report["_id"]
-        reports.append(report)
-    return {"reports": reports, "count": len(reports)}
-
-
-@reports_router.patch("/{report_id}")
-async def update_report(report_id: str, body: ReportUpdate):
-    if not await _is_admin(body.user_id):
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    try:
-        oid = ObjectId(report_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid report id")
-
-    updates = {k: v for k, v in body.model_dump(exclude={"user_id"}).items() if v is not None}
-    if not updates:
-        raise HTTPException(status_code=400, detail="No fields to update")
-
-    result = await db["Report"].update_one({"_id": oid}, {"$set": updates})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Report not found")
-
-    return {"message": "Report updated"}
