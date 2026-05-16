@@ -68,5 +68,6 @@ async def login(body: LoginRequest):
             "email": user["email"],
             "name": user.get("firstName", "") + " " + user.get("lastName", ""),
             "role": user.get("role", "user"),
+            "telephone": user.get("telephone", ""),
         }
     }

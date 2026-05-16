@@ -8,11 +8,15 @@ import {
   ScrollView,
   Animated,
   Dimensions,
+  Alert,
   TextInput,
 } from "react-native";
-import MapView, { Marker, PROVIDER_DEFAULT } from "react-native-maps";
+import { useAuth } from "@/context/auth";
+import MapView, { Marker, Circle, PROVIDER_DEFAULT } from "react-native-maps";
 import * as Location from "expo-location";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -25,6 +29,7 @@ const ISRAEL_REGION = {
 
 type Pin = { latitude: number; longitude: number; name: string };
 type ShelterPin = {
+  _id?: string;
   latitude: number;
   longitude: number;
   name: string;
@@ -70,6 +75,7 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export default function MapScreen() {
+  const { user } = useAuth();
   const mapRef = useRef<MapView>(null);
   const [region, setRegion] = useState(ISRAEL_REGION);
   const [loading, setLoading] = useState(true);
@@ -87,6 +93,8 @@ export default function MapScreen() {
   );
   // Current visible map region — used for viewport culling
   const [visibleRegion, setVisibleRegion] = useState(ISRAEL_REGION);
+  // Home "do not notify" circle — loaded from settings (AsyncStorage)
+  const [home, setHome] = useState<{ lat: number; lng: number; radius: number } | null>(null);
 
   // Load shelters and convert addresses to coordinates
   useEffect(() => {
@@ -102,6 +110,7 @@ export default function MapScreen() {
           const lat = sh.lat ?? sh.latitude;
           const lng = sh.lng ?? sh.longitude;
           const buildPin = (la: number, lo: number): ShelterPin => ({
+            _id: sh._id ?? sh.id,
             latitude: la,
             longitude: lo,
             name: sh.name || "",
@@ -132,6 +141,34 @@ export default function MapScreen() {
       }
     })();
   }, []);
+
+  // Reload home settings every time the map gains focus, so the circle reflects
+  // whatever the user most recently saved in Settings.
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        try {
+          const saved = await AsyncStorage.getItem("userSettings");
+          if (!saved) {
+            setHome(null);
+            return;
+          }
+          const p = JSON.parse(saved);
+          const lat = typeof p.homeLat === "number" ? p.homeLat : null;
+          const lng = typeof p.homeLng === "number" ? p.homeLng : null;
+          const radius = parseFloat(p.radius);
+          // Only show the circle when we have valid coords AND a positive radius
+          if (lat != null && lng != null && !isNaN(radius) && radius > 0) {
+            setHome({ lat, lng, radius });
+          } else {
+            setHome(null);
+          }
+        } catch {
+          setHome(null);
+        }
+      })();
+    }, []),
+  );
 
   useEffect(() => {
     (async () => {
@@ -259,10 +296,82 @@ export default function MapScreen() {
     );
   };
 
+  // Save the currently-tapped pin as the user's home address. Merges with
+  // whatever is already in `userSettings` so we don't blow away radius / mode.
+  const setPinAsHome = async () => {
+    if (!pin) return;
+    Alert.alert(
+      "Set as Home",
+      `Use this location as your home address?\n\n${pin.name}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Confirm",
+          onPress: async () => {
+            try {
+              const saved = await AsyncStorage.getItem("userSettings");
+              const prev = saved ? JSON.parse(saved) : {};
+              const next = {
+                ...prev,
+                address: pin.name,
+                homeLat: pin.latitude,
+                homeLng: pin.longitude,
+              };
+              await AsyncStorage.setItem("userSettings", JSON.stringify(next));
+
+              // Sync to backend (best-effort — local copy is the source of truth here)
+              const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "";
+              if (API_URL && user?.id) {
+                fetch(`${API_URL}/api/settings`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    user_id: user.id,
+                    address: pin.name,
+                    home_lat: pin.latitude,
+                    home_lng: pin.longitude,
+                    exclusion_radius: parseFloat(prev.radius) || 0,
+                    transport_mode: prev.transportMode || "walking",
+                    is_handicapped: !!prev.isHandicapped,
+                  }),
+                }).catch(() => {});
+              }
+
+              // Refresh the on-map circle immediately. Only show it if a
+              // positive radius is already configured.
+              const radius = parseFloat(prev.radius);
+              if (!isNaN(radius) && radius > 0) {
+                setHome({ lat: pin.latitude, lng: pin.longitude, radius });
+                Alert.alert("Home set", "Your home address has been updated.");
+              } else {
+                setHome(null);
+                Alert.alert(
+                  "Home set",
+                  "Open Settings to set a 'Do Not Notify' radius so the circle appears on the map.",
+                );
+              }
+
+              setPin(null);
+            } catch {
+              Alert.alert("Error", "Could not save home address.");
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const navigateToShelter = () => {
     if (!selectedShelter) return;
     router.push(
       `/navigate?lat=${selectedShelter.latitude}&lng=${selectedShelter.longitude}&name=${encodeURIComponent(selectedShelter.name)}`,
+    );
+  };
+
+  const reportShelter = () => {
+    if (!selectedShelter) return;
+    router.push(
+      `/report?shelterId=${selectedShelter._id}&shelterName=${encodeURIComponent(selectedShelter.name)}`,
     );
   };
 
@@ -391,6 +500,17 @@ export default function MapScreen() {
           />
         )}
 
+        {/* Home "do not notify" radius circle */}
+        {home && (
+          <Circle
+            center={{ latitude: home.lat, longitude: home.lng }}
+            radius={home.radius}
+            strokeColor="rgba(26,115,232,0.7)"
+            strokeWidth={2}
+            fillColor="rgba(26,115,232,0.15)"
+          />
+        )}
+
         {/* Shelter markers (memoized so they don't re-render on every state change) */}
         {shelterMarkers}
       </MapView>
@@ -451,9 +571,20 @@ export default function MapScreen() {
           <Text style={styles.panelName} numberOfLines={2}>
             {pin.name}
           </Text>
-          <TouchableOpacity style={styles.navBtn} onPress={navigateToPin}>
-            <Text style={styles.navBtnText}>🧭 Navigate Here</Text>
-          </TouchableOpacity>
+          <View style={styles.panelActions}>
+            <TouchableOpacity
+              style={[styles.navBtn, styles.panelActionsBtn]}
+              onPress={navigateToPin}
+            >
+              <Text style={styles.navBtnText}>🧭 Navigate</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.homeBtn, styles.panelActionsBtn]}
+              onPress={setPinAsHome}
+            >
+              <Text style={styles.homeBtnText}>🏠 Set as Home</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -462,6 +593,7 @@ export default function MapScreen() {
         shelter={selectedShelter}
         onClose={handleClosePanel}
         onNavigate={navigateToShelter}
+        onReport={reportShelter}
       />
     </View>
   );
@@ -473,10 +605,12 @@ const ShelterPanel = memo(function ShelterPanel({
   shelter,
   onClose,
   onNavigate,
+  onReport,
 }: {
   shelter: ShelterPin | null;
   onClose: () => void;
   onNavigate: () => void;
+  onReport: () => void;
 }) {
   function timeAgo(dateStr?: string): string {
     if (!dateStr) return "—";
@@ -599,9 +733,14 @@ const ShelterPanel = memo(function ShelterPanel({
         )}
       </ScrollView>
 
-      <TouchableOpacity style={styles.navBtn} onPress={onNavigate}>
-        <Text style={styles.navBtnText}>🧭 Navigate Here</Text>
-      </TouchableOpacity>
+      <View style={styles.panelActions}>
+        <TouchableOpacity style={[styles.navBtn, styles.panelActionsBtn]} onPress={onNavigate}>
+          <Text style={styles.navBtnText}>🧭 Navigate</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.reportBtn, styles.panelActionsBtn]} onPress={onReport}>
+          <Text style={styles.reportBtnText}>⚠️ Report</Text>
+        </TouchableOpacity>
+      </View>
     </Animated.View>
   );
 });
@@ -777,6 +916,13 @@ const styles = StyleSheet.create({
     marginLeft: 32,
     textAlign: "left",
   },
+  panelActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  panelActionsBtn: {
+    flex: 1,
+  },
   navBtn: {
     backgroundColor: "#1a73e8",
     borderRadius: 12,
@@ -784,6 +930,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   navBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  homeBtn: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: "#1a73e8",
+  },
+  homeBtnText: { color: "#1a73e8", fontSize: 15, fontWeight: "700" },
+  reportBtn: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: "#E24B4A",
+  },
+  reportBtnText: { color: "#E24B4A", fontSize: 16, fontWeight: "700" },
 
   // Zoom-out hint bar
   zoomHint: {

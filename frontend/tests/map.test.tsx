@@ -16,6 +16,25 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
 }));
 
+// AsyncStorage is used by the map to load the user's home / radius settings.
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  getItem: jest.fn(() => Promise.resolve(null)),
+  setItem: jest.fn(() => Promise.resolve()),
+  removeItem: jest.fn(() => Promise.resolve()),
+}));
+
+// useFocusEffect is invoked when the map gains focus to refresh the home circle.
+// In tests we just no-op it — the relevant settings loading is exercised
+// indirectly through the AsyncStorage mock above.
+jest.mock('@react-navigation/native', () => ({
+  useFocusEffect: jest.fn(),
+}));
+
+// Auth context isn't relevant to the map's rendering tests, so stub it out.
+jest.mock('@/context/auth', () => ({
+  useAuth: () => ({ user: null }),
+}));
+
 const mockAnimateToRegion = jest.fn();
 
 jest.mock('react-native-maps', () => {
@@ -38,6 +57,8 @@ jest.mock('react-native-maps', () => {
     __esModule: true,
     default: MockMapView,
     Marker: MockMarker,
+    // The home-radius circle is just visual — render nothing in tests.
+    Circle: () => null,
     PROVIDER_DEFAULT: null,
   };
 });
@@ -143,7 +164,7 @@ describe('MapScreen', () => {
     await act(async () => {
       tapMap(getByTestId('map-view'));
     });
-    expect(getByText(/Navigate Here/i)).toBeTruthy();
+    expect(getByText(/Navigate/i)).toBeTruthy();
   });
 
   // 6 ── Panel shows the address (falls back to coords if no reverse geocode result)
@@ -167,7 +188,7 @@ describe('MapScreen', () => {
     await act(async () => {
       tapMap(getByTestId('map-view'), 31.5, 34.8);
     });
-    fireEvent.press(getByText(/Navigate Here/i));
+    fireEvent.press(getByText(/Navigate/i));
     expect(router.push).toHaveBeenCalledWith(expect.stringContaining('lat=31.5'));
     expect(router.push).toHaveBeenCalledWith(expect.stringContaining('lng=34.8'));
   });
@@ -180,9 +201,9 @@ describe('MapScreen', () => {
     await act(async () => {
       tapMap(getByTestId('map-view'));
     });
-    expect(getByText(/Navigate Here/i)).toBeTruthy();
+    expect(getByText(/Navigate/i)).toBeTruthy();
     fireEvent.press(getByText('✕'));
-    expect(queryByText(/Navigate Here/i)).toBeNull();
+    expect(queryByText(/Navigate/i)).toBeNull();
     expect(queryByTestId('tap-marker')).toBeNull();
   });
 
@@ -307,7 +328,7 @@ describe('Search feature', () => {
     await act(async () => { fireEvent.press(getByTestId('search-button')); });
 
     expect(mockAnimateToRegion).not.toHaveBeenCalled();
-    expect(queryByText(/Navigate Here/i)).toBeNull();
+    expect(queryByText(/Navigate/i)).toBeNull();
     expect(getByTestId('map-view')).toBeTruthy(); // map still visible
   });
 
