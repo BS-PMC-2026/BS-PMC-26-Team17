@@ -241,7 +241,7 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5', padding: 20 },
+  container: { flex: 1, backgroundColor: '#181818', padding: 20 },
   header: { fontSize: 24, fontWeight: 'bold', marginBottom: 25, color: '#333' },
   section: { marginBottom: 25 },
   rowSection: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

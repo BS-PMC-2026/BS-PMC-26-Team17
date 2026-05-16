@@ -140,7 +140,7 @@ async def get_shelter_reports(shelter_id: str):
         raise HTTPException(status_code=400, detail="Invalid shelter id")
 
     reports = []
-    async for report in db["Reports"].find({"shelterId": shelter_id}).sort("createdAt", -1):
+    async for report in db["Report"].find({"shelterId": shelter_id}).sort("createdAt", -1):
         report["id"] = str(report["_id"])
         del report["_id"]
         reports.append(report)
@@ -159,7 +159,7 @@ class ReportUpdate(BaseModel):
 @reports_router.get("")
 async def get_all_reports():
     reports = []
-    async for report in db["Reports"].find({}).sort("createdAt", -1):
+    async for report in db["Report"].find({}).sort("createdAt", -1):
         report["id"] = str(report["_id"])
         del report["_id"]
         reports.append(report)
@@ -180,7 +180,7 @@ async def update_report(report_id: str, body: ReportUpdate):
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    result = await db["Reports"].update_one({"_id": oid}, {"$set": updates})
+    result = await db["Report"].update_one({"_id": oid}, {"$set": updates})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Report not found")
 

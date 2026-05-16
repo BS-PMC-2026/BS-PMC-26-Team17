@@ -48,7 +48,7 @@ type Report = {
   forwardedAt?: string;
   resolvedAt?: string;
   handledBy?: string;
-  callBackPhone?: string;
+  callbackNumber?: string;
   status?: string;
 };
 
@@ -295,6 +295,7 @@ export default function ShelterDashboard() {
   const [selectedShelter, setSelectedShelter] = useState<Shelter | null>(null);
   const [activeTab, setActiveTab] = useState<"active" | "history">("active");
   const [doneInputs, setDoneInputs] = useState<Record<string, { resolvedAt: string; handledBy: string }>>({});
+  const [statusMenuOpen, setStatusMenuOpen] = useState<string | null>(null);
 
   type EditForm = {
     name: string;
@@ -462,6 +463,50 @@ export default function ShelterDashboard() {
     }
   };
 
+  const reportCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    allReports.forEach((r) => {
+      if (r.shelterId && r.status !== "done") {
+        counts[r.shelterId] = (counts[r.shelterId] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [allReports]);
+
+  const shelterOverrides = useMemo(() => {
+    const accessCnt: Record<string, number> = {};
+    const petCnt:    Record<string, number> = {};
+    const cleanCnt:  Record<string, number> = {};
+    allReports.forEach((r) => {
+      if (!r.shelterId || r.status === "done") return;
+      if (r.reportCategory === "access")      accessCnt[r.shelterId] = (accessCnt[r.shelterId] || 0) + 1;
+      if (r.reportCategory === "pet_issue")   petCnt[r.shelterId]    = (petCnt[r.shelterId]    || 0) + 1;
+      if (r.reportCategory === "cleanliness") cleanCnt[r.shelterId]  = (cleanCnt[r.shelterId]  || 0) + 1;
+    });
+    const result: Record<string, { accessStatus?: string; petIssueReported?: boolean; cleanlinessStatus?: string }> = {};
+    const ids = new Set([...Object.keys(accessCnt), ...Object.keys(petCnt), ...Object.keys(cleanCnt)]);
+    ids.forEach((id) => {
+      result[id] = {
+        ...(accessCnt[id] >= 1 ? { accessStatus: "locked" }     : {}),
+        ...(petCnt[id]    >= 1 ? { petIssueReported: true }     : {}),
+        ...(cleanCnt[id]  >= 2 ? { cleanlinessStatus: "dirty" } : {}),
+      };
+    });
+    return result;
+  }, [allReports]);
+
+  const lastReportByShelterId = useMemo(() => {
+    const latest: Record<string, string> = {};
+    allReports.forEach((r) => {
+      if (!r.shelterId || !r.createdAt) return;
+      const prev = latest[r.shelterId];
+      if (!prev || new Date(r.createdAt) > new Date(prev)) {
+        latest[r.shelterId] = r.createdAt;
+      }
+    });
+    return latest;
+  }, [allReports]);
+
   const filtered = useMemo(() => {
     let list = shelters;
     if (search.trim()) {
@@ -476,13 +521,16 @@ export default function ShelterDashboard() {
     if (chips.includes("Inactive"))
       list = list.filter((s) => !s.isActive);
     if (chips.includes("Pet Friendly 🐾"))
-      list = list.filter((s) => !s.petIssueReported);
+      list = list.filter((s) => {
+        const hasPetIssue = shelterOverrides[s.id || ""]?.petIssueReported ?? s.petIssueReported;
+        return !hasPetIssue;
+      });
     if (chips.includes("Accessible ♿"))
       list = list.filter((s) => s.isAccessible && !s.hasStairs);
     if (chips.includes("Recently Reported"))
-      list = list.filter((s) => !!s.lastReportAt);
+      list = list.filter((s) => !!lastReportByShelterId[s.id || ""]);
     return list;
-  }, [shelters, search, chips]);
+  }, [shelters, search, chips, shelterOverrides, lastReportByShelterId]);
 
   const totalCount = filtered.filter((s) => s.isVisibleOnMap).length;
   const openCount = filtered.filter(
@@ -497,16 +545,6 @@ export default function ShelterDashboard() {
       (s.isActive && s.shouldBeOpen && s.accessStatus === "locked") ||
       !s.shouldBeOpen,
   ).length;
-
-  const reportCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    allReports.forEach((r) => {
-      if (r.shelterId && r.status !== "done") {
-        counts[r.shelterId] = (counts[r.shelterId] || 0) + 1;
-      }
-    });
-    return counts;
-  }, [allReports]);
 
   const shelterReports = useMemo(
     () => allReports.filter((r) => r.shelterId === selectedShelter?.id),
@@ -626,13 +664,16 @@ export default function ShelterDashboard() {
                           <Text style={[s.bold, { color: "#fff" }]} numberOfLines={1}>
                             {item.name}
                           </Text>
-                          {(reportCounts[item.id || ""] || 0) > 0 && (
-                            <View style={{ backgroundColor: "#BA7517", borderRadius: 10, paddingHorizontal: 5, paddingVertical: 1 }}>
-                              <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>
-                                {reportCounts[item.id || ""]}
-                              </Text>
-                            </View>
-                          )}
+                          {(reportCounts[item.id || ""] || 0) > 0 && (() => {
+                            const cnt = reportCounts[item.id || ""];
+                            return (
+                              <View style={{ backgroundColor: "#BA7517", borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                                <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>
+                                  {cnt} {cnt === 1 ? "report" : "reports"}
+                                </Text>
+                              </View>
+                            );
+                          })()}
                         </View>
                         <View style={{ flexDirection: "row", gap: 4, paddingHorizontal: 8, marginTop: 2 }}>
                           {item.isAccessible && !item.hasStairs && <Text style={{ fontSize: 14 }}>♿</Text>}
@@ -665,14 +706,26 @@ export default function ShelterDashboard() {
                       </View>
 
                       {/* Access status */}
-                      <View style={[s.cellV, { width: COLS[5].width }]}>
-                        <Badge value={item.accessStatus || "unknown"} labels={ACCESS_LABELS} colors={ACCESS_COLORS} />
-                      </View>
+                      {(() => {
+                        const ov = shelterOverrides[item.id || ""] || {};
+                        const val = ov.accessStatus ?? item.accessStatus ?? "unknown";
+                        return (
+                          <View style={[s.cellV, { width: COLS[5].width }]}>
+                            <Badge value={val} labels={ACCESS_LABELS} colors={ACCESS_COLORS} />
+                          </View>
+                        );
+                      })()}
 
                       {/* Cleanliness */}
-                      <View style={[s.cellV, { width: COLS[6].width }]}>
-                        <Badge value={item.cleanlinessStatus || "unknown"} labels={CLEAN_LABELS} colors={CLEAN_COLORS} />
-                      </View>
+                      {(() => {
+                        const ov = shelterOverrides[item.id || ""] || {};
+                        const val = ov.cleanlinessStatus ?? item.cleanlinessStatus ?? "unknown";
+                        return (
+                          <View style={[s.cellV, { width: COLS[6].width }]}>
+                            <Badge value={val} labels={CLEAN_LABELS} colors={CLEAN_COLORS} />
+                          </View>
+                        );
+                      })()}
 
                       {/* Accessible */}
                       <View style={[s.cellV, { width: COLS[7].width }]}>
@@ -689,16 +742,22 @@ export default function ShelterDashboard() {
                       </View>
 
                       {/* Pets */}
-                      <View style={[s.cellV, { width: COLS[9].width }]}>
-                        <Text style={{ fontSize: 20, textAlign: "center", color: item.petIssueReported ? "#E24B4A" : "#1D9E75" }}>
-                          {item.petIssueReported ? "✗" : "✓"}
-                        </Text>
-                      </View>
+                      {(() => {
+                        const ov = shelterOverrides[item.id || ""] || {};
+                        const hasPetIssue = ov.petIssueReported ?? item.petIssueReported;
+                        return (
+                          <View style={[s.cellV, { width: COLS[9].width }]}>
+                            <Text style={{ fontSize: 20, textAlign: "center", color: hasPetIssue ? "#E24B4A" : "#1D9E75" }}>
+                              {hasPetIssue ? "✗" : "✓"}
+                            </Text>
+                          </View>
+                        );
+                      })()}
 
                       {/* Last report */}
                       <View style={[s.cellV, { width: COLS[10].width }]}>
                         <Text style={[s.cell, { color: "#777", fontSize: 15 }]} numberOfLines={1}>
-                          {timeAgo(item.lastReportAt || "")}
+                          {timeAgo(lastReportByShelterId[item.id || ""] || "")}
                         </Text>
                       </View>
                     </TouchableOpacity>
@@ -966,8 +1025,8 @@ export default function ShelterDashboard() {
                     )}
 
                     {/* Phone */}
-                    {!!report.callBackPhone && (
-                      <Text style={md.metaLine}>📞 {report.callBackPhone}</Text>
+                    {!!report.callbackNumber && (
+                      <Text style={md.metaLine}>📞 {report.callbackNumber}</Text>
                     )}
 
                     {/* Handled by */}
@@ -986,36 +1045,53 @@ export default function ShelterDashboard() {
                       )}
                     </View>
 
-                    {/* Status update — admin + active tab only */}
-                    {isAdmin && activeTab === "active" && (
+                    {/* Status update — admin + active tab + not done */}
+                    {isAdmin && activeTab === "active" && report.status !== "done" && (
                       <View style={{ marginTop: 12 }}>
-                        {!isDoneMode ? (
+                        {/* Update Status button */}
+                        {statusMenuOpen !== rid && !isDoneMode && (
+                          <TouchableOpacity
+                            style={md.updateBtn}
+                            onPress={() => setStatusMenuOpen(rid)}
+                          >
+                            <Text style={md.updateBtnTxt}>Update Status ▾</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        {/* Forward-only menu */}
+                        {statusMenuOpen === rid && !isDoneMode && (
                           <View style={md.statusBtnRow}>
-                            <TouchableOpacity
-                              style={[md.statusBtn, { borderColor: STATUS_COLORS.pending }]}
-                              onPress={() => updateReportStatus(rid, "pending")}
-                            >
-                              <Text style={[md.statusBtnTxt, { color: STATUS_COLORS.pending }]}>Pending</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={[md.statusBtn, { borderColor: STATUS_COLORS.forwarded }]}
-                              onPress={() => updateReportStatus(rid, "forwarded")}
-                            >
-                              <Text style={[md.statusBtnTxt, { color: STATUS_COLORS.forwarded }]}>Forwarded</Text>
-                            </TouchableOpacity>
+                            {report.status === "pending" && (
+                              <TouchableOpacity
+                                style={[md.statusBtn, { borderColor: STATUS_COLORS.forwarded }]}
+                                onPress={() => {
+                                  updateReportStatus(rid, "forwarded");
+                                  setStatusMenuOpen(null);
+                                }}
+                              >
+                                <Text style={[md.statusBtnTxt, { color: STATUS_COLORS.forwarded }]}>Forwarded</Text>
+                              </TouchableOpacity>
+                            )}
                             <TouchableOpacity
                               style={[md.statusBtn, { borderColor: STATUS_COLORS.done }]}
-                              onPress={() =>
-                                setDoneInputs((prev) => ({
-                                  ...prev,
-                                  [rid]: { resolvedAt: "", handledBy: "" },
-                                }))
-                              }
+                              onPress={() => {
+                                setDoneInputs((prev) => ({ ...prev, [rid]: { resolvedAt: "", handledBy: "" } }));
+                                setStatusMenuOpen(null);
+                              }}
                             >
                               <Text style={[md.statusBtnTxt, { color: STATUS_COLORS.done }]}>Done</Text>
                             </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[md.statusBtn, { borderColor: "#444" }]}
+                              onPress={() => setStatusMenuOpen(null)}
+                            >
+                              <Text style={[md.statusBtnTxt, { color: "#777" }]}>Cancel</Text>
+                            </TouchableOpacity>
                           </View>
-                        ) : (
+                        )}
+
+                        {/* Done inputs */}
+                        {isDoneMode && (
                           <View style={{ gap: 8 }}>
                             <TextInput
                               style={md.doneInput}
@@ -1023,10 +1099,7 @@ export default function ShelterDashboard() {
                               placeholderTextColor="#555"
                               value={doneInputs[rid]?.resolvedAt || ""}
                               onChangeText={(t) =>
-                                setDoneInputs((prev) => ({
-                                  ...prev,
-                                  [rid]: { ...prev[rid], resolvedAt: t },
-                                }))
+                                setDoneInputs((prev) => ({ ...prev, [rid]: { ...prev[rid], resolvedAt: t } }))
                               }
                             />
                             <TextInput
@@ -1035,10 +1108,7 @@ export default function ShelterDashboard() {
                               placeholderTextColor="#555"
                               value={doneInputs[rid]?.handledBy || ""}
                               onChangeText={(t) =>
-                                setDoneInputs((prev) => ({
-                                  ...prev,
-                                  [rid]: { ...prev[rid], handledBy: t },
-                                }))
+                                setDoneInputs((prev) => ({ ...prev, [rid]: { ...prev[rid], handledBy: t } }))
                               }
                             />
                             <View style={md.statusBtnRow}>
@@ -1049,16 +1119,12 @@ export default function ShelterDashboard() {
                                 <Text style={[md.statusBtnTxt, { color: STATUS_COLORS.done }]}>Confirm Done</Text>
                               </TouchableOpacity>
                               <TouchableOpacity
-                                style={[md.statusBtn, { borderColor: "#555" }]}
+                                style={[md.statusBtn, { borderColor: "#444" }]}
                                 onPress={() =>
-                                  setDoneInputs((prev) => {
-                                    const next = { ...prev };
-                                    delete next[rid];
-                                    return next;
-                                  })
+                                  setDoneInputs((prev) => { const n = { ...prev }; delete n[rid]; return n; })
                                 }
                               >
-                                <Text style={[md.statusBtnTxt, { color: "#888" }]}>Cancel</Text>
+                                <Text style={[md.statusBtnTxt, { color: "#777" }]}>Cancel</Text>
                               </TouchableOpacity>
                             </View>
                           </View>
@@ -1240,6 +1306,16 @@ const md = StyleSheet.create({
   metaLine: { fontSize: 13, color: "#888", marginTop: 4 },
   timestamps: { marginTop: 8, gap: 2 },
   timeLabel: { fontSize: 12, color: "#555" },
+  updateBtn: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 0.5,
+    borderColor: "#555",
+    backgroundColor: "#2a2a2a",
+  },
+  updateBtnTxt: { color: "#ccc", fontSize: 13, fontWeight: "600" },
   statusBtnRow: { flexDirection: "row", gap: 8 },
   statusBtn: {
     paddingHorizontal: 14,
