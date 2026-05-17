@@ -278,6 +278,7 @@ describe('Search feature', () => {
     await waitFor(() =>
       expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/shelter-details')),
     );
+    // Only the shelters API was hit — Nominatim was never called
     expect((global.fetch as jest.Mock).mock.calls.length).toBe(1);
   });
 
@@ -397,6 +398,7 @@ describe('Search feature', () => {
     fireEvent.changeText(getByTestId('search-input'), 'מקלט גן העצמאות');
     await act(async () => { fireEvent.press(getByTestId('search-button')); });
 
+    // Should navigate to /shelter-details for SHELTER_A specifically
     await waitFor(() =>
       expect(router.push).toHaveBeenCalledWith(expect.stringContaining('lat=31.25')),
     );
