@@ -1,41 +1,31 @@
-import { useEffect, useMemo, useRef, useState, memo, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   View,
   StyleSheet,
   Text,
   ActivityIndicator,
   TouchableOpacity,
-  ScrollView,
-  Animated,
-  Dimensions,
   Alert,
   TextInput,
 } from "react-native";
-import { useAuth } from "@/context/auth";
-import MapView, { Marker, Circle, PROVIDER_DEFAULT } from "react-native-maps";
+import { WebView } from "react-native-webview";
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
+import { useAuth } from "@/context/auth";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
-const ISRAEL_REGION = {
-  latitude: 31.5,
-  longitude: 34.8,
-  latitudeDelta: 3,
-  longitudeDelta: 3,
-};
-
 type Pin = { latitude: number; longitude: number; name: string };
 type ShelterPin = {
-  _id?: string;
+  id: string;
   latitude: number;
   longitude: number;
   name: string;
   address: string;
   neighborhood?: string;
-  area?: string;
+  area?: string;        // mapped from ShelterTest.alertZone if present
   city?: string;
   placeType?: string;
   capacity?: number;
@@ -50,34 +40,165 @@ type ShelterPin = {
   lastReportType?: string;
 };
 
-const ACCESS_LABELS: Record<string, string> = {
-  open: "Open",
-  closed: "Closed",
-  locked: "Locked",
-  unknown: "Unknown",
-};
-const ACCESS_COLORS: Record<string, string> = {
-  open: "#1D9E75",
-  closed: "#E24B4A",
-  locked: "#888780",
-  unknown: "#BA7517",
-};
-const CLEAN_LABELS: Record<string, string> = {
-  clean: "Clean",
-  dirty: "Dirty",
-  unknown: "Unknown",
-};
-const TYPE_LABELS: Record<string, string> = {
-  "public shelter": "Public Shelter",
-  school: "School",
-  parking: "Parking",
-  other: "Other",
-};
+// Build the query string for /shelter-details — all values become strings.
+function shelterParams(s: ShelterPin): string {
+  const parts: string[] = [];
+  const add = (k: string, v: unknown) => {
+    if (v === undefined || v === null || v === '') return;
+    parts.push(`${k}=${encodeURIComponent(String(v))}`);
+  };
+  add('id', s.id);
+  add('lat', s.latitude);
+  add('lng', s.longitude);
+  add('name', s.name);
+  add('address', s.address);
+  add('neighborhood', s.neighborhood);
+  add('area', s.area);
+  add('city', s.city);
+  add('placeType', s.placeType);
+  add('capacity', s.capacity);
+  add('accessStatus', s.accessStatus);
+  add('isFull', s.isFull);
+  add('isAccessible', s.isAccessible);
+  add('hasStairs', s.hasStairs);
+  add('petIssueReported', s.petIssueReported);
+  add('cleanlinessStatus', s.cleanlinessStatus);
+  add('shouldBeOpen', s.shouldBeOpen);
+  add('lastReportAt', s.lastReportAt);
+  add('lastReportType', s.lastReportType);
+  return parts.join('&');
+}
+
+// ── Leaflet map HTML ─────────────────────────────────────────────────
+// Self-contained map runtime that lives inside the WebView. Communicates
+// with React Native via window.ReactNativeWebView.postMessage (out) and
+// window/document 'message' listeners (in).
+const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<style>
+  html,body,#map { margin:0; padding:0; width:100vw; height:100vh; }
+  .user-dot {
+    width:18px;height:18px;border-radius:9px;background:#1a73e8;
+    border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.4);
+  }
+  .search-pin {
+    width:22px;height:22px;border-radius:50% 50% 50% 0;
+    background:#1a73e8;border:2px solid #fff;
+    transform:rotate(-45deg);box-shadow:0 0 4px rgba(0,0,0,.4);
+  }
+</style></head><body>
+<div id="map"></div>
+<script>
+  var map = L.map('map', { zoomControl:false }).setView([31.5, 34.8], 8);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+
+  var clusters = L.markerClusterGroup({
+    chunkedLoading: true,
+    spiderfyOnMaxZoom: true,
+    showCoverageOnHover: false,
+    maxClusterRadius: 50,
+  });
+  map.addLayer(clusters);
+
+  var userMarker = null;
+  var searchMarker = null;
+  var homeCircle = null;
+
+  function send(obj) {
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+    }
+  }
+
+  map.on('click', function(e) {
+    send({ type:'mapClick', lat:e.latlng.lat, lng:e.latlng.lng });
+  });
+
+  function handle(raw) {
+    var msg;
+    try { msg = JSON.parse(raw); } catch(_) { return; }
+
+    if (msg.type === 'setShelters') {
+      clusters.clearLayers();
+      var icon = L.divIcon({
+        html: '<div style="width:26px;height:26px;border-radius:50%;background:#1D9E75;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:13px;">🏠</div>',
+        iconSize: [26, 26],
+        className: '',
+      });
+      var markers = [];
+      for (var i = 0; i < msg.data.length; i++) {
+        var s = msg.data[i];
+        var m = L.marker([s.lat, s.lng], { icon: icon });
+        (function(id) {
+          m.on('click', function(e) {
+            L.DomEvent.stopPropagation(e);
+            send({ type:'shelterClick', id: id });
+          });
+        })(s.id);
+        markers.push(m);
+      }
+      clusters.addLayers(markers);
+    }
+
+    else if (msg.type === 'setUserLocation') {
+      var ll = [msg.lat, msg.lng];
+      if (userMarker) { userMarker.setLatLng(ll); }
+      else {
+        userMarker = L.marker(ll, {
+          icon: L.divIcon({ className:'', html:'<div class="user-dot"></div>', iconSize:[18,18] }),
+          interactive: false,
+        }).addTo(map);
+      }
+    }
+
+    else if (msg.type === 'flyTo') {
+      map.setView([msg.lat, msg.lng], msg.zoom || 16, { animate: true, duration: 0.5 });
+    }
+
+    else if (msg.type === 'setSearchPin') {
+      if (searchMarker) { map.removeLayer(searchMarker); searchMarker = null; }
+      if (msg.data) {
+        searchMarker = L.marker([msg.data.lat, msg.data.lng], {
+          icon: L.divIcon({ className:'', html:'<div class="search-pin"></div>', iconSize:[22,22], iconAnchor:[11,22] }),
+        }).addTo(map);
+      }
+    }
+
+    else if (msg.type === 'setHomeCircle') {
+      // Remove the previous circle (if any) so the radius can be updated.
+      if (homeCircle) { map.removeLayer(homeCircle); homeCircle = null; }
+      if (msg.data) {
+        homeCircle = L.circle([msg.data.lat, msg.data.lng], {
+          radius: msg.data.radius,
+          color: 'rgba(26,115,232,0.7)',
+          weight: 2,
+          fillColor: 'rgba(26,115,232,1)',
+          fillOpacity: 0.15,
+          interactive: false,
+        }).addTo(map);
+      }
+    }
+  }
+
+  // iOS uses 'message' on window; Android often on document. Listen to both.
+  window.addEventListener('message', function(e) { handle(e.data); });
+  document.addEventListener('message', function(e) { handle(e.data); });
+
+  // Notify RN that the map runtime is ready to receive data
+  send({ type:'ready' });
+</script>
+</body></html>`;
 
 export default function MapScreen() {
   const { user } = useAuth();
-  const mapRef = useRef<MapView>(null);
-  const [region, setRegion] = useState(ISRAEL_REGION);
+  const webRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
   const [locationGranted, setLocationGranted] = useState(false);
   const [userLocation, setUserLocation] = useState<{
@@ -88,15 +209,22 @@ export default function MapScreen() {
   const [shelterPins, setShelterPins] = useState<ShelterPin[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searching, setSearching] = useState(false);
-  const [selectedShelter, setSelectedShelter] = useState<ShelterPin | null>(
-    null,
-  );
-  // Current visible map region — used for viewport culling
-  const [visibleRegion, setVisibleRegion] = useState(ISRAEL_REGION);
+  const [webReady, setWebReady] = useState(false);
   // Home "do not notify" circle — loaded from settings (AsyncStorage)
   const [home, setHome] = useState<{ lat: number; lng: number; radius: number } | null>(null);
 
-  // Load shelters and convert addresses to coordinates
+  // Helper — send a JSON message into the WebView
+  const sendToWeb = useCallback((obj: any) => {
+    webRef.current?.postMessage(JSON.stringify(obj));
+  }, []);
+
+  // Push to the full-screen shelter details route. Cast — the route is real
+  // (`app/shelter-details.tsx`) but expo-router's generated types may lag.
+  const openShelter = useCallback((sh: ShelterPin) => {
+    router.push(`/shelter-details?${shelterParams(sh)}` as any);
+  }, []);
+
+  // Load shelters from the API
   useEffect(() => {
     (async () => {
       try {
@@ -106,34 +234,33 @@ export default function MapScreen() {
 
         const pins: ShelterPin[] = [];
         for (const sh of shelters) {
-          // If coordinates already exist in the database, use them
           const lat = sh.lat ?? sh.latitude;
           const lng = sh.lng ?? sh.longitude;
-          const buildPin = (la: number, lo: number): ShelterPin => ({
-            _id: sh._id ?? sh.id,
-            latitude: la,
-            longitude: lo,
-            name: sh.name || "",
-            address: sh.address || "",
-            neighborhood: sh.neighborhood,
-            area: sh.area,
-            city: sh.city,
-            placeType: sh.placeType,
-            capacity: sh.capacity,
-            accessStatus: sh.accessStatus,
-            isFull: sh.isFull,
-            isAccessible: sh.isAccessible,
-            hasStairs: sh.hasStairs,
-            petIssueReported: sh.petIssueReported,
-            cleanlinessStatus: sh.cleanlinessStatus,
-            shouldBeOpen: sh.shouldBeOpen,
-            lastReportAt: sh.lastReportAt,
-            lastReportType: sh.lastReportType,
-          });
           if (typeof lat === "number" && typeof lng === "number" && lat !== 0) {
-            pins.push(buildPin(lat, lng));
+            pins.push({
+              id: sh.id ?? sh._id ?? `${lat}-${lng}-${sh.name}`,
+              latitude: lat,
+              longitude: lng,
+              name: sh.name || "",
+              address: sh.address || "",
+              neighborhood: sh.neighborhood,
+              // ShelterTest stores the area as `alertZone`; fall back to it so
+              // the Area row in shelter-details is populated correctly.
+              area: sh.area ?? sh.alertZone,
+              city: sh.city,
+              placeType: sh.placeType,
+              capacity: sh.capacity,
+              accessStatus: sh.accessStatus,
+              isFull: sh.isFull,
+              isAccessible: sh.isAccessible,
+              hasStairs: sh.hasStairs,
+              petIssueReported: sh.petIssueReported,
+              cleanlinessStatus: sh.cleanlinessStatus,
+              shouldBeOpen: sh.shouldBeOpen,
+              lastReportAt: sh.lastReportAt,
+              lastReportType: sh.lastReportType,
+            });
           }
-          // Skip shelters without coords — never geocode (causes memory pressure on iOS)
         }
         setShelterPins(pins);
       } catch (e) {
@@ -142,22 +269,18 @@ export default function MapScreen() {
     })();
   }, []);
 
-  // Reload home settings every time the map gains focus, so the circle reflects
-  // whatever the user most recently saved in Settings.
+  // Reload home settings every time the map gains focus, so the circle
+  // reflects whatever the user most recently saved in Settings.
   useFocusEffect(
     useCallback(() => {
       (async () => {
         try {
           const saved = await AsyncStorage.getItem("userSettings");
-          if (!saved) {
-            setHome(null);
-            return;
-          }
+          if (!saved) { setHome(null); return; }
           const p = JSON.parse(saved);
           const lat = typeof p.homeLat === "number" ? p.homeLat : null;
           const lng = typeof p.homeLng === "number" ? p.homeLng : null;
           const radius = parseFloat(p.radius);
-          // Only show the circle when we have valid coords AND a positive radius
           if (lat != null && lng != null && !isNaN(radius) && radius > 0) {
             setHome({ lat, lng, radius });
           } else {
@@ -170,72 +293,114 @@ export default function MapScreen() {
     }, []),
   );
 
+  // Get user location once permission is granted
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === "granted") {
         const loc = await Location.getCurrentPositionAsync({});
-        const coords = {
+        setUserLocation({
           latitude: loc.coords.latitude,
           longitude: loc.coords.longitude,
-        };
-        setRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 });
-        setUserLocation(coords);
+        });
         setLocationGranted(true);
       }
       setLoading(false);
     })();
   }, []);
 
-  const focusOnUser = () => {
-    if (userLocation && mapRef.current) {
-      mapRef.current.animateToRegion(
-        { ...userLocation, latitudeDelta: 0.01, longitudeDelta: 0.01 },
-        500,
-      );
-    }
-  };
+  // ── Sync data → WebView whenever it (or the data) changes ─────────────
 
-  // ── Map tap → marker + panel ─────────────────────────────────────────
-  const handleMapPress = async (e: any) => {
-    const { latitude, longitude } = e.nativeEvent.coordinate;
+  useEffect(() => {
+    if (!webReady || shelterPins.length === 0) return;
+    const data = shelterPins.map(s => ({
+      id: s.id, lat: s.latitude, lng: s.longitude,
+    }));
+    sendToWeb({ type: 'setShelters', data });
+  }, [webReady, shelterPins, sendToWeb]);
 
-    // Show coordinates temporarily until address resolves
-    setPin({
-      latitude,
-      longitude,
-      name: "Loading address...",
+  useEffect(() => {
+    if (!webReady || !userLocation) return;
+    sendToWeb({
+      type: 'setUserLocation',
+      lat: userLocation.latitude,
+      lng: userLocation.longitude,
     });
+    sendToWeb({
+      type: 'flyTo',
+      lat: userLocation.latitude,
+      lng: userLocation.longitude,
+      zoom: 14,
+    });
+  }, [webReady, userLocation, sendToWeb]);
 
-    try {
-      const results = await Location.reverseGeocodeAsync({
-        latitude,
-        longitude,
-      });
-      if (results.length > 0) {
-        const r = results[0];
-        // Build readable address: street + number, city
-        const street = [r.street, r.streetNumber].filter(Boolean).join(" ");
-        const city = r.city || r.subregion || r.region || "";
-        const address =
-          [street, city].filter(Boolean).join(", ") ||
-          `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+  useEffect(() => {
+    if (!webReady) return;
+    sendToWeb({
+      type: 'setSearchPin',
+      data: pin ? { lat: pin.latitude, lng: pin.longitude } : null,
+    });
+  }, [webReady, pin, sendToWeb]);
 
-        setPin({ latitude, longitude, name: address });
-      } else {
-        setPin({
-          latitude,
-          longitude,
-          name: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
-        });
-      }
-    } catch {
-      setPin({
-        latitude,
-        longitude,
-        name: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
-      });
+  // Home "do not notify" circle — push to Leaflet whenever it changes
+  useEffect(() => {
+    if (!webReady) return;
+    sendToWeb({
+      type: 'setHomeCircle',
+      data: home ? { lat: home.lat, lng: home.lng, radius: home.radius } : null,
+    });
+  }, [webReady, home, sendToWeb]);
+
+  // ── Handle messages coming back from the WebView ──────────────────────
+  const handleWebMessage = useCallback(async (event: any) => {
+    let msg: any;
+    try { msg = JSON.parse(event.nativeEvent.data); } catch { return; }
+
+    if (msg.type === 'ready') {
+      setWebReady(true);
+      return;
     }
+
+    if (msg.type === 'shelterClick') {
+      const found = shelterPins.find(s => s.id === msg.id);
+      if (found) {
+        setPin(null);
+        openShelter(found);
+      }
+      return;
+    }
+
+    if (msg.type === 'mapClick') {
+      const { lat, lng } = msg;
+      setPin({ latitude: lat, longitude: lng, name: "Loading address..." });
+      try {
+        const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+        if (results.length > 0) {
+          const r = results[0];
+          const street = [r.street, r.streetNumber].filter(Boolean).join(" ");
+          const city = r.city || r.subregion || r.region || "";
+          const address =
+            [street, city].filter(Boolean).join(", ") ||
+            `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          setPin({ latitude: lat, longitude: lng, name: address });
+        } else {
+          setPin({ latitude: lat, longitude: lng, name: `${lat.toFixed(5)}, ${lng.toFixed(5)}` });
+        }
+      } catch {
+        setPin({ latitude: lat, longitude: lng, name: `${lat.toFixed(5)}, ${lng.toFixed(5)}` });
+      }
+    }
+  }, [shelterPins, openShelter]);
+
+  // 📍 button — fly the map to the user
+  const focusOnUser = () => {
+    if (!userLocation) return;
+    sendToWeb({
+      type: 'flyTo',
+      lat: userLocation.latitude,
+      lng: userLocation.longitude,
+      zoom: 16,
+    });
   };
 
   // ── Address search — first tries shelter names, then Nominatim ──────
@@ -243,26 +408,20 @@ export default function MapScreen() {
     const q = searchQuery.trim();
     if (!q) return;
     setSearching(true);
-    setSelectedShelter(null);
     setPin(null);
 
-    // 1. Search loaded shelter names (case-insensitive, partial match)
     const lower = q.toLowerCase();
     const matched = shelterPins.find(sh =>
       sh.name.toLowerCase().includes(lower) ||
       (sh.address && sh.address.toLowerCase().includes(lower))
     );
     if (matched) {
-      mapRef.current?.animateToRegion(
-        { latitude: matched.latitude, longitude: matched.longitude, latitudeDelta: 0.005, longitudeDelta: 0.005 },
-        500
-      );
-      setSelectedShelter(matched);
+      sendToWeb({ type: 'flyTo', lat: matched.latitude, lng: matched.longitude, zoom: 17 });
+      openShelter(matched);
       setSearching(false);
       return;
     }
 
-    // 2. Fall back to Nominatim address geocoding
     try {
       const locationBias = userLocation
         ? `&viewbox=${userLocation.longitude - 0.1},${userLocation.latitude + 0.1},${userLocation.longitude + 0.1},${userLocation.latitude - 0.1}&bounded=0`
@@ -274,12 +433,9 @@ export default function MapScreen() {
       const data = await res.json();
       if (data.length > 0) {
         const { lat, lon, display_name } = data[0];
-        const latitude  = parseFloat(lat);
+        const latitude = parseFloat(lat);
         const longitude = parseFloat(lon);
-        mapRef.current?.animateToRegion(
-          { latitude, longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 },
-          500
-        );
+        sendToWeb({ type: 'flyTo', lat: latitude, lng: longitude, zoom: 16 });
         setPin({ latitude, longitude, name: display_name });
       }
     } catch (e) {
@@ -287,7 +443,7 @@ export default function MapScreen() {
     } finally {
       setSearching(false);
     }
-  }, [searchQuery, userLocation, shelterPins]);
+  }, [searchQuery, userLocation, shelterPins, sendToWeb, openShelter]);
 
   const navigateToPin = () => {
     if (!pin) return;
@@ -320,7 +476,6 @@ export default function MapScreen() {
               await AsyncStorage.setItem("userSettings", JSON.stringify(next));
 
               // Sync to backend (best-effort — local copy is the source of truth here)
-              const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "";
               if (API_URL && user?.id) {
                 fetch(`${API_URL}/api/settings`, {
                   method: "POST",
@@ -361,121 +516,6 @@ export default function MapScreen() {
     );
   };
 
-  const navigateToShelter = () => {
-    if (!selectedShelter) return;
-    router.push(
-      `/navigate?lat=${selectedShelter.latitude}&lng=${selectedShelter.longitude}&name=${encodeURIComponent(selectedShelter.name)}`,
-    );
-  };
-
-  const reportShelter = () => {
-    if (!selectedShelter) return;
-    router.push(
-      `/report?shelterId=${selectedShelter._id}&shelterName=${encodeURIComponent(selectedShelter.name)}`,
-    );
-  };
-
-  const updateShelter = () => {
-    if (!selectedShelter) return;
-    router.push(`/ShelterDashboard?search=${encodeURIComponent(selectedShelter.name)}`);
-  };
-
-  function timeAgo(dateStr?: string): string {
-    if (!dateStr) return "—";
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-    if (mins < 1) return "now";
-    if (mins < 60) return `${mins} min ago`;
-    if (hours < 24) return `${hours} hr ago`;
-    return `${days} days ago`;
-  }
-
-  // Close panel — plain synchronous close (no InteractionManager / Modal)
-  const handleClosePanel = useCallback(() => {
-    setSelectedShelter(null);
-  }, []);
-
-  // Region change throttling: only update visibleRegion when the user has
-  // panned/zoomed meaningfully. Stops marker churn that leaks iOS memory.
-  const regionUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastRegion = useRef(visibleRegion);
-  const handleRegionChange = useCallback((r: typeof ISRAEL_REGION) => {
-    const old = lastRegion.current;
-    const latDiff  = Math.abs(r.latitude  - old.latitude);
-    const lngDiff  = Math.abs(r.longitude - old.longitude);
-    const zoomDiff = Math.abs(r.latitudeDelta - old.latitudeDelta);
-    // Ignore tiny movements (less than ~10% of the current view size)
-    if (
-      latDiff  < old.latitudeDelta  * 0.1 &&
-      lngDiff  < old.longitudeDelta * 0.1 &&
-      zoomDiff < old.latitudeDelta  * 0.1
-    ) return;
-
-    if (regionUpdateTimer.current) clearTimeout(regionUpdateTimer.current);
-    regionUpdateTimer.current = setTimeout(() => {
-      lastRegion.current = r;
-      setVisibleRegion(r);
-    }, 400);
-  }, []);
-
-  // Clean up the timer on unmount
-  useEffect(() => () => {
-    if (regionUpdateTimer.current) clearTimeout(regionUpdateTimer.current);
-  }, []);
-
-  // Stable onPress so memoized markers never re-render
-  const handleMarkerPress = useCallback((sh: ShelterPin) => {
-    setSelectedShelter(sh);
-    setPin(null);
-  }, []);
-
-  // Viewport culling — only render shelters visible on screen.
-  // All shelters are loaded from the DB; this just limits what's rendered.
-  const MAX_VISIBLE = 30;
-  const ZOOM_THRESHOLD = 0.15; // latitudeDelta above this = too zoomed out
-
-  const visibleShelters = useMemo(() => {
-    // Zoom gate: don't render any markers when too far out
-    if (visibleRegion.latitudeDelta > ZOOM_THRESHOLD) return [];
-
-    const latMin = visibleRegion.latitude  - visibleRegion.latitudeDelta  / 2;
-    const latMax = visibleRegion.latitude  + visibleRegion.latitudeDelta  / 2;
-    const lngMin = visibleRegion.longitude - visibleRegion.longitudeDelta / 2;
-    const lngMax = visibleRegion.longitude + visibleRegion.longitudeDelta / 2;
-
-    const inView = shelterPins.filter(sh =>
-      sh.latitude  >= latMin && sh.latitude  <= latMax &&
-      sh.longitude >= lngMin && sh.longitude <= lngMax
-    );
-
-    // When over the cap, prioritise shelters closest to the user
-    if (inView.length > MAX_VISIBLE && userLocation) {
-      inView.sort((a, b) => {
-        const dA = (a.latitude - userLocation.latitude) ** 2 + (a.longitude - userLocation.longitude) ** 2;
-        const dB = (b.latitude - userLocation.latitude) ** 2 + (b.longitude - userLocation.longitude) ** 2;
-        return dA - dB;
-      });
-    }
-
-    return inView.slice(0, MAX_VISIBLE);
-  }, [shelterPins, visibleRegion, userLocation]);
-
-  // Memoize markers — stable key (no index) so markers aren't recreated on pan
-  const shelterMarkers = useMemo(
-    () =>
-      visibleShelters.map((sh) => (
-        <ShelterMarker
-          key={`shelter-${sh.latitude}-${sh.longitude}`}
-          sh={sh}
-          color={getShelterColor(sh)}
-          onPress={handleMarkerPress}
-        />
-      )),
-    [visibleShelters, handleMarkerPress],
-  );
-
   if (loading) {
     return (
       <View style={styles.center}>
@@ -487,45 +527,17 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Map */}
-      <MapView
-        ref={mapRef}
+      {/* Map (Leaflet inside a WebView — bypasses Apple Maps memory issues) */}
+      <WebView
+        ref={webRef}
         style={styles.map}
-        provider={PROVIDER_DEFAULT}
-        initialRegion={region}
-        showsUserLocation={locationGranted}
-        onPress={handleMapPress}
-        onRegionChangeComplete={handleRegionChange}
-      >
-        {pin && (
-          <Marker
-            key={`pin-${pin.latitude}-${pin.longitude}`}
-            coordinate={{ latitude: pin.latitude, longitude: pin.longitude }}
-            pinColor="#1a73e8"
-          />
-        )}
-
-        {/* Home "do not notify" radius circle */}
-        {home && (
-          <Circle
-            center={{ latitude: home.lat, longitude: home.lng }}
-            radius={home.radius}
-            strokeColor="rgba(26,115,232,0.7)"
-            strokeWidth={2}
-            fillColor="rgba(26,115,232,0.15)"
-          />
-        )}
-
-        {/* Shelter markers (memoized so they don't re-render on every state change) */}
-        {shelterMarkers}
-      </MapView>
-
-      {/* Zoom-out hint — shown when too far out to display markers */}
-      {visibleRegion.latitudeDelta > ZOOM_THRESHOLD && (
-        <View style={styles.zoomHint} pointerEvents="none">
-          <Text style={styles.zoomHintText}>🔍 Zoom in to see shelters</Text>
-        </View>
-      )}
+        source={{ html: MAP_HTML }}
+        originWhitelist={['*']}
+        javaScriptEnabled
+        domStorageEnabled
+        onMessage={handleWebMessage}
+        testID="map-webview"
+      />
 
       {/* Search bar */}
       <View style={styles.searchBar} testID="search-bar">
@@ -564,8 +576,8 @@ export default function MapScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Bottom panel for arbitrary map tap */}
-      {pin && !selectedShelter && (
+      {/* Bottom panel for arbitrary map tap (non-shelter point) */}
+      {pin && (
         <View style={styles.panel}>
           <TouchableOpacity
             style={styles.panelClose}
@@ -592,256 +604,9 @@ export default function MapScreen() {
           </View>
         </View>
       )}
-
-      {/* Rich panel for selected shelter — separate Modal so closing it doesn't re-layout the map */}
-      <ShelterPanel
-        shelter={selectedShelter}
-        onClose={handleClosePanel}
-        onNavigate={navigateToShelter}
-        onReport={reportShelter}
-        onUpdate={updateShelter}
-        isAdmin={user?.role === "admin"}
-      />
     </View>
   );
 }
-
-const SCREEN_H = Dimensions.get("window").height;
-
-const ShelterPanel = memo(function ShelterPanel({
-  shelter,
-  onClose,
-  onNavigate,
-  onReport,
-  onUpdate,
-  isAdmin,
-}: {
-  shelter: ShelterPin | null;
-  onClose: () => void;
-  onNavigate: () => void;
-  onReport: () => void;
-  onUpdate: () => void;
-  isAdmin?: boolean;
-}) {
-  function timeAgo(dateStr?: string): string {
-    if (!dateStr) return "—";
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-    if (mins < 1) return "now";
-    if (mins < 60) return `${mins} min ago`;
-    if (hours < 24) return `${hours} hr ago`;
-    return `${days} days ago`;
-  }
-
-  // Keep the panel mounted while it animates out. `displayed` is the data we render,
-  // `shelter` is the data the parent currently wants visible.
-  const [displayed, setDisplayed] = useState<ShelterPin | null>(shelter);
-  const translateY = useRef(new Animated.Value(SCREEN_H)).current;
-
-  useEffect(() => {
-    if (shelter) {
-      // Opening — swap content immediately, slide up
-      setDisplayed(shelter);
-      Animated.timing(translateY, {
-        toValue: 0,
-        duration: 220,
-        useNativeDriver: true,
-      }).start();
-    } else if (displayed) {
-      // Closing — slide down, then unmount content
-      Animated.timing(translateY, {
-        toValue: SCREEN_H,
-        duration: 220,
-        useNativeDriver: true,
-      }).start(() => setDisplayed(null));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shelter]);
-
-  if (!displayed) return null;
-  const sh = displayed; // alias so the rest of the JSX can use `sh`
-
-  return (
-    <Animated.View
-      style={[styles.shelterPanel, { transform: [{ translateY }] }]}
-      pointerEvents="box-none"
-    >
-          <TouchableOpacity style={styles.panelClose} onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Text style={styles.panelCloseText}>✕</Text>
-          </TouchableOpacity>
-
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.shelterTitle} numberOfLines={2}>
-          {sh.name || "Shelter"}
-        </Text>
-
-        <View style={styles.iconRow}>
-          {sh.isAccessible && !sh.hasStairs && (
-            <Text style={styles.bigIcon}>♿</Text>
-          )}
-          {!sh.petIssueReported && (
-            <Text style={styles.bigIcon}>🐾</Text>
-          )}
-        </View>
-
-        <View style={styles.badgeRow}>
-          <View
-            style={[
-              styles.badge,
-              {
-                borderColor: ACCESS_COLORS[sh.accessStatus || "unknown"] + "88",
-                backgroundColor: ACCESS_COLORS[sh.accessStatus || "unknown"] + "22",
-              },
-            ]}
-          >
-            <Text style={[styles.badgeTxt, { color: ACCESS_COLORS[sh.accessStatus || "unknown"] }]}>
-              {ACCESS_LABELS[sh.accessStatus || "unknown"]}
-            </Text>
-          </View>
-
-          <View
-            style={[
-              styles.badge,
-              {
-                borderColor: (sh.isFull ? "#E24B4A" : "#1D9E75") + "88",
-                backgroundColor: (sh.isFull ? "#E24B4A" : "#1D9E75") + "22",
-              },
-            ]}
-          >
-            <Text style={[styles.badgeTxt, { color: sh.isFull ? "#E24B4A" : "#1D9E75" }]}>
-              {sh.isFull ? "Full" : "Available"}
-            </Text>
-          </View>
-        </View>
-
-        <DataRow label="Address" value={sh.address || "—"} />
-        <DataRow label="Neighborhood" value={sh.neighborhood || "—"} />
-        <DataRow label="Area" value={sh.area || "—"} />
-        <DataRow label="City" value={sh.city || "—"} />
-        <DataRow
-          label="Type"
-          value={TYPE_LABELS[sh.placeType || ""] || sh.placeType || "—"}
-        />
-        <DataRow
-          label="Capacity"
-          value={sh.capacity != null ? String(sh.capacity) : "—"}
-        />
-        <DataRow
-          label="Cleanliness"
-          value={CLEAN_LABELS[sh.cleanlinessStatus || "unknown"]}
-        />
-        <DataRow
-          label="Should Be Open"
-          value={sh.shouldBeOpen ? "✓ Yes" : "✗ No"}
-        />
-        <DataRow label="Has Stairs" value={sh.hasStairs ? "Yes" : "No"} />
-        <DataRow label="Accessible" value={sh.isAccessible ? "Yes" : "No"} />
-        <DataRow label="Last Report" value={timeAgo(sh.lastReportAt)} />
-        {sh.lastReportType && (
-          <DataRow label="Report Type" value={sh.lastReportType} />
-        )}
-      </ScrollView>
-
-      <View style={styles.panelActions}>
-        <TouchableOpacity style={[styles.navBtn, styles.panelActionsBtn]} onPress={onNavigate}>
-          <Text style={styles.navBtnText}>🧭 Navigate</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.reportBtn, styles.panelActionsBtn]} onPress={onReport}>
-          <Text style={styles.reportBtnText}>⚠️ Report</Text>
-        </TouchableOpacity>
-        {isAdmin && (
-          <TouchableOpacity style={[styles.updateBtn, styles.panelActionsBtn]} onPress={onUpdate}>
-            <Text style={styles.updateBtnText}>✏️ Update</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </Animated.View>
-  );
-});
-
-// ── Background color logic — separate feature ────────────────────────
-// Intentionally isolated so the color feature can be changed independently
-// from the marker icon design.
-// TODO: replace with real color logic when the color feature is implemented.
-function getShelterColor(_sh: ShelterPin): string {
-  return '#1D9E75'; // uniform until color feature is implemented
-}
-
-// ── Marker icon design — separate from color ─────────────────────────
-const ShelterMarker = memo(function ShelterMarker({
-  sh,
-  color,
-  onPress,
-}: {
-  sh: ShelterPin;
-  color: string;
-  onPress: (sh: ShelterPin) => void;
-}) {
-  const icon = '🏠';
-
-  return (
-    <Marker
-      coordinate={{ latitude: sh.latitude, longitude: sh.longitude }}
-      tracksViewChanges={false}
-      stopPropagation
-      anchor={{ x: 0.5, y: 1 }}
-      onPress={(e) => { e.stopPropagation?.(); onPress(sh); }}
-    >
-      <View style={[mk.wrap, { backgroundColor: color }]}>
-        <Text style={mk.icon}>{icon}</Text>
-      </View>
-      <View style={[mk.tip, { borderTopColor: color }]} />
-    </Marker>
-  );
-});
-
-// Marker bubble styles — kept outside component so they never recreate
-const mk = StyleSheet.create({
-  wrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-    elevation: 4,
-  },
-  icon: { fontSize: 16 },
-  tip: {
-    width: 0,
-    height: 0,
-    alignSelf: 'center',
-    borderLeftWidth: 6,
-    borderRightWidth: 6,
-    borderTopWidth: 8,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-  },
-});
-
-const DataRow = memo(function DataRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <View style={styles.dataRow}>
-      <Text style={styles.dataLabel}>{label}</Text>
-      <Text style={styles.dataValue} numberOfLines={2}>
-        {value}
-      </Text>
-    </View>
-  );
-});
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -901,7 +666,7 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   locationButtonWithPanel: {
-    bottom: 170,
+    bottom: 190,
   },
   locationIcon: { fontSize: 22 },
 
@@ -955,88 +720,4 @@ const styles = StyleSheet.create({
     borderColor: "#1a73e8",
   },
   homeBtnText: { color: "#1a73e8", fontSize: 15, fontWeight: "700" },
-  reportBtn: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    borderWidth: 1.5,
-    borderColor: "#E24B4A",
-  },
-  reportBtnText: { color: "#E24B4A", fontSize: 16, fontWeight: "700" },
-  updateBtn: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    borderWidth: 1.5,
-    borderColor: "#378ADD",
-  },
-  updateBtnText: { color: "#378ADD", fontSize: 16, fontWeight: "700" },
-
-  // Zoom-out hint bar
-  zoomHint: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(50,50,50,0.75)',
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  zoomHintText: { color: '#fff', fontSize: 14, fontWeight: '500' },
-
-  // Tap-outside backdrop for the modal panel
-  modalBackdrop: { flex: 1, backgroundColor: 'transparent' },
-
-  // Rich shelter panel
-  shelterPanel: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    maxHeight: "70%",
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 28,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    elevation: 12,
-  },
-  shelterTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#222",
-    marginRight: 32,
-    marginBottom: 10,
-  },
-  iconRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
-  bigIcon: { fontSize: 24 },
-  badgeRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 16,
-    flexWrap: "wrap",
-  },
-  badge: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
-    borderWidth: 1,
-  },
-  badgeTxt: { fontSize: 13, fontWeight: "600" },
-
-  dataRow: {
-    flexDirection: "row",
-    paddingVertical: 8,
-    borderBottomWidth: 0.5,
-    borderBottomColor: "#eee",
-  },
-  dataLabel: { width: 130, fontSize: 13, color: "#888", fontWeight: "500" },
-  dataValue: { flex: 1, fontSize: 14, color: "#222" },
 });
