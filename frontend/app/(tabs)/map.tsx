@@ -14,6 +14,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/auth";
+import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -67,6 +68,20 @@ function shelterParams(s: ShelterPin): string {
   add('lastReportAt', s.lastReportAt);
   add('lastReportType', s.lastReportType);
   return parts.join('&');
+}
+
+export function getShelterColor(shelter: ShelterPin): string {
+  if (
+    shelter.accessStatus === "closed" ||
+    shelter.accessStatus === "locked" ||
+    shelter.shouldBeOpen === false
+  ) {
+    return SHELTER_STATUS_COLORS.closed;
+  }
+  if (shelter.isFull) {
+    return SHELTER_STATUS_COLORS.full;
+  }
+  return SHELTER_STATUS_COLORS.open;
 }
 
 // ── Leaflet map HTML ─────────────────────────────────────────────────
@@ -127,14 +142,15 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
 
     if (msg.type === 'setShelters') {
       clusters.clearLayers();
-      var icon = L.divIcon({
-        html: '<div style="width:26px;height:26px;border-radius:50%;background:#1D9E75;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:13px;">🏠</div>',
-        iconSize: [26, 26],
-        className: '',
-      });
       var markers = [];
       for (var i = 0; i < msg.data.length; i++) {
         var s = msg.data[i];
+        var color = s.color || '#BA7517';
+        var icon = L.divIcon({
+          html: '<div style="width:26px;height:26px;border-radius:50%;background:' + color + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:13px;">🏠</div>',
+          iconSize: [26, 26],
+          className: '',
+        });
         var m = L.marker([s.lat, s.lng], { icon: icon });
         (function(id) {
           m.on('click', function(e) {
@@ -218,8 +234,6 @@ export default function MapScreen() {
     webRef.current?.postMessage(JSON.stringify(obj));
   }, []);
 
-  // Push to the full-screen shelter details route. Cast — the route is real
-  // (`app/shelter-details.tsx`) but expo-router's generated types may lag.
   const openShelter = useCallback((sh: ShelterPin) => {
     router.push(`/shelter-details?${shelterParams(sh)}` as any);
   }, []);
@@ -314,7 +328,7 @@ export default function MapScreen() {
   useEffect(() => {
     if (!webReady || shelterPins.length === 0) return;
     const data = shelterPins.map(s => ({
-      id: s.id, lat: s.latitude, lng: s.longitude,
+      id: s.id, lat: s.latitude, lng: s.longitude, color: getShelterColor(s),
     }));
     sendToWeb({ type: 'setShelters', data });
   }, [webReady, shelterPins, sendToWeb]);
@@ -568,8 +582,22 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Gear shortcut — sits just below the search bar, top-left.
-          Tap → opens the Settings screen (which now includes Logout). */}
+      {/* Map legend */}
+      <View style={styles.legend}>
+        <View style={styles.legendRow}>
+          <View style={[styles.legendDot, { backgroundColor: SHELTER_STATUS_COLORS.open }]} />
+          <Text style={styles.legendLabel}>פתוח</Text>
+        </View>
+        <View style={styles.legendRow}>
+          <View style={[styles.legendDot, { backgroundColor: SHELTER_STATUS_COLORS.full }]} />
+          <Text style={styles.legendLabel}>מלא</Text>
+        </View>
+        <View style={styles.legendRow}>
+          <View style={[styles.legendDot, { backgroundColor: SHELTER_STATUS_COLORS.closed }]} />
+          <Text style={styles.legendLabel}>סגור / נעול</Text>
+        </View>
+      </View>
+
       <TouchableOpacity
         style={styles.gearButton}
         onPress={openSettings}
@@ -756,4 +784,36 @@ const styles = StyleSheet.create({
     borderColor: "#1a73e8",
   },
   homeBtnText: { color: "#1a73e8", fontSize: 15, fontWeight: "700" },
+
+  legend: {
+    position: "absolute",
+    top: 110,
+    right: 12,
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 10,
+    gap: 6,
+  },
+  legendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  legendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  legendLabel: {
+    fontSize: 12,
+    color: "#333",
+    writingDirection: "rtl",
+  },
 });
