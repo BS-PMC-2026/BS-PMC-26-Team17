@@ -37,6 +37,8 @@ def _valid_payload(user_id=ADMIN_ID):
         "neighborhood": "Old City",
         "area": "Center",
         "city": "Be'er Sheva",
+        "lat": 31.25,
+        "lng": 34.79,
         "placeType": "public shelter",
         "capacity": 50,
         "accessStatus": "open",
@@ -144,6 +146,8 @@ async def test_defaults_applied_to_optional_fields(async_client):
         "user_id": ADMIN_ID,
         "name": "Minimal Shelter",
         "address": "Some St 1",
+        "lat": 31.25,
+        "lng": 34.79,
     }
 
     with patch("app.routes.shelters.db", mock_db):
