@@ -403,6 +403,11 @@ export default function MapScreen() {
     });
   };
 
+  // ⚙️ button — open the Settings screen (includes Logout etc.)
+  const openSettings = () => {
+    router.push('/(tabs)/settings' as any);
+  };
+
   // ── Address search — first tries shelter names, then Nominatim ──────
   const searchAddress = useCallback(async () => {
     const q = searchQuery.trim();
@@ -563,6 +568,17 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Gear shortcut — sits just below the search bar, top-left.
+          Tap → opens the Settings screen (which now includes Logout). */}
+      <TouchableOpacity
+        style={styles.gearButton}
+        onPress={openSettings}
+        testID="gear-button"
+        accessibilityLabel="Open settings"
+      >
+        <Text style={styles.gearIcon}>⚙️</Text>
+      </TouchableOpacity>
+
       {/* Location button */}
       {locationGranted && (
         <TouchableOpacity
@@ -648,6 +664,26 @@ const styles = StyleSheet.create({
   searchBtnText: { fontSize: 16 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   loadingText: { marginTop: 12, color: "#666" },
+
+  // ⚙️ shortcut — top-left, just under the search bar.
+  gearButton: {
+    position: 'absolute',
+    top: 110,
+    left: 12,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 10,
+  },
+  gearIcon: { fontSize: 20 },
 
   locationButton: {
     position: "absolute",
