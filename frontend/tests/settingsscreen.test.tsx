@@ -5,6 +5,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import SettingsScreen from '../app/(tabs)/settings';
 import { AuthProvider } from '../context/auth';
 
+// SettingsScreen now imports `router` from expo-router (Back button +
+// admin Shelter Dashboard shortcut). Stub the module so jest doesn't pull
+// in the real navigator under the hood.
+jest.mock('expo-router', () => ({
+  router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
+}));
+
 // SettingsScreen uses useFocusEffect to refresh on focus. In a unit-test
 // environment there's no navigator, so we mock it to behave like useEffect
 // and just invoke the callback once on mount.
