@@ -127,6 +127,13 @@ export default function LoginScreen() {
           )}
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={styles.forgotButton}
+          onPress={() => router.push('/forgot-password' as never)}
+        >
+          <Text style={styles.forgotText}>Forgot password?</Text>
+        </TouchableOpacity>
+
         <View style={styles.divider}>
           <View style={styles.dividerLine} />
           <Text style={styles.dividerText}>or</Text>
@@ -266,6 +273,16 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     color: '#94a3b8',
     fontSize: 12,
+  },
+  forgotButton: {
+    marginTop: 10,
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  forgotText: {
+    color: '#0a7ea4',
+    fontSize: 14,
+    fontWeight: '500',
   },
   linkButton: {
     marginTop: 8,
