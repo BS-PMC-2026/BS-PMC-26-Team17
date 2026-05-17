@@ -20,7 +20,10 @@ function RootLayoutNav() {
 
   useEffect(() => {
     if (isLoading) return;
-    const inAuthGroup = segments[0] === 'login' || segments[0] === 'register';
+    const inAuthGroup =
+      segments[0] === 'login' ||
+      segments[0] === 'register' ||
+      segments[0] === 'forgot-password';
     if (!isLoggedIn && !inAuthGroup) {
       router.replace('/login');
     } else if (isLoggedIn && inAuthGroup) {
@@ -49,6 +52,7 @@ function RootLayoutNav() {
           <>
             <Stack.Screen name="login" />
             <Stack.Screen name="register" />
+            <Stack.Screen name="forgot-password" />
           </>
         )}
       </Stack>
