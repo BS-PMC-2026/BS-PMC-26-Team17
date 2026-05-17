@@ -37,7 +37,7 @@ describe('RegisterScreen integration', () => {
   it('blocks submission and shows an error when fields are missing', async () => {
     const api = render(<RegisterScreen />);
 
-    fireEvent.press(api.getByText('Create Account'));
+    fireEvent.press(api.getByText('Create גדAccount'));
 
     expect(await api.findByText('Please fill in all fields')).toBeTruthy();
     expect(global.fetch).not.toHaveBeenCalled();
