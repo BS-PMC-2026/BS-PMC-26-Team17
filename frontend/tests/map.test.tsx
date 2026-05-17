@@ -407,3 +407,17 @@ describe('Search feature', () => {
     );
   });
 });
+
+// ─── Gear shortcut to Settings ────────────────────────────────────────────────
+
+describe('Gear shortcut', () => {
+  it('tapping ⚙️ navigates to the Settings screen', async () => {
+    grantLocation();
+    const { router } = require('expo-router');
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+
+    fireEvent.press(getByTestId('gear-button'));
+    expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/settings'));
+  });
+});
