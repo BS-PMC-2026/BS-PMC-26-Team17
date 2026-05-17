@@ -66,7 +66,7 @@ export default function AppLayout() {
             drawerIcon: ({ color }: { color: string }) => (
               <IconSymbol size={22} name="list.bullet" color={color} />
             ),
-            // drawerItemStyle: isAdmin ? undefined : { display: "none" },
+            drawerItemStyle: isAdmin ? undefined : { display: "none" },
           }}
         />
         <Drawer.Screen
@@ -77,7 +77,7 @@ export default function AppLayout() {
             drawerIcon: ({ color }: { color: string }) => (
               <IconSymbol size={22} name="plus.circle.fill" color={color} />
             ),
-            // drawerItemStyle: isAdmin ? undefined : { display: "none" },
+            drawerItemStyle: isAdmin ? undefined : { display: "none" },
           }}
         />
         <Drawer.Screen
