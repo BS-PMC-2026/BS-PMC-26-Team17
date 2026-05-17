@@ -1,11 +1,23 @@
 from datetime import datetime, timezone
 from math import radians, sin, cos, asin, sqrt
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from bson import ObjectId
 from app.core.database import db
 from app.models import ReportCreate
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+async def _is_admin(user_id: str) -> bool:
+    if not user_id:
+        return False
+    try:
+        user = await db["User"].find_one({"_id": ObjectId(user_id)})
+    except Exception:
+        return False
+    return bool(user and user.get("role") == "admin")
 
 # Distance (meters) within which a report is considered "verified"
 VERIFY_RADIUS_METERS = 50
@@ -87,14 +99,53 @@ async def create_report(body: ReportCreate):
         "isVerified": is_verified,
     }
 
+    if body.reportType == "locked" and not is_verified:
+        raise HTTPException(
+            status_code=400,
+            detail="You must be near the shelter to report it as locked",
+        )
+
     result = await db["Report"].insert_one(report)
     return {"message": "Report submitted successfully", "reportId": str(result.inserted_id)}
 
 
 @router.get("")
-async def get_reports():
+async def get_reports(shelterId: Optional[str] = Query(None)):
+    query: dict = {}
+    if shelterId:
+        query["shelterId"] = shelterId
     reports = []
-    async for r in db["Report"].find().sort("createdAt", -1):
-        r["_id"] = str(r["_id"])
+    async for r in db["Report"].find(query).sort("createdAt", -1):
+        r["id"] = str(r["_id"])
+        del r["_id"]
         reports.append(r)
     return {"reports": reports, "count": len(reports)}
+
+
+class ReportUpdate(BaseModel):
+    user_id: str
+    status: Optional[str] = None
+    forwardedAt: Optional[str] = None
+    resolvedAt: Optional[str] = None
+    handledBy: Optional[str] = None
+
+
+@router.patch("/{report_id}")
+async def update_report(report_id: str, body: ReportUpdate):
+    if not await _is_admin(body.user_id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        oid = ObjectId(report_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid report id")
+
+    updates = {k: v for k, v in body.model_dump(exclude={"user_id"}).items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = await db["Report"].update_one({"_id": oid}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    return {"message": "Report updated"}

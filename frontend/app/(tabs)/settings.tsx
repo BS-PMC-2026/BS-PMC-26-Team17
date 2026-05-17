@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/auth';
 
 // Nominatim suggestion shape (the parts we care about)
@@ -47,6 +48,7 @@ function formatSuggestion(r: NominatimResult): string {
 }
 
 export default function SettingsScreen() {
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
   // Form state
@@ -239,7 +241,7 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView
-      style={styles.container}
+      style={[styles.container, { paddingTop: insets.top }]}
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={{ paddingBottom: 40 }}
     >
@@ -352,7 +354,7 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5', padding: 20 },
+  container: { flex: 1, backgroundColor: '#181818', padding: 20 },
   header: { fontSize: 24, fontWeight: 'bold', marginBottom: 18, color: '#333' },
 
   warningBanner: {

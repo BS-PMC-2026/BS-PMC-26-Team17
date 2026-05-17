@@ -375,6 +375,11 @@ export default function MapScreen() {
     );
   };
 
+  const updateShelter = () => {
+    if (!selectedShelter) return;
+    router.push(`/ShelterDashboard?search=${encodeURIComponent(selectedShelter.name)}`);
+  };
+
   function timeAgo(dateStr?: string): string {
     if (!dateStr) return "—";
     const diff = Date.now() - new Date(dateStr).getTime();
@@ -594,6 +599,8 @@ export default function MapScreen() {
         onClose={handleClosePanel}
         onNavigate={navigateToShelter}
         onReport={reportShelter}
+        onUpdate={updateShelter}
+        isAdmin={user?.role === "admin"}
       />
     </View>
   );
@@ -606,11 +613,15 @@ const ShelterPanel = memo(function ShelterPanel({
   onClose,
   onNavigate,
   onReport,
+  onUpdate,
+  isAdmin,
 }: {
   shelter: ShelterPin | null;
   onClose: () => void;
   onNavigate: () => void;
   onReport: () => void;
+  onUpdate: () => void;
+  isAdmin?: boolean;
 }) {
   function timeAgo(dateStr?: string): string {
     if (!dateStr) return "—";
@@ -740,6 +751,11 @@ const ShelterPanel = memo(function ShelterPanel({
         <TouchableOpacity style={[styles.reportBtn, styles.panelActionsBtn]} onPress={onReport}>
           <Text style={styles.reportBtnText}>⚠️ Report</Text>
         </TouchableOpacity>
+        {isAdmin && (
+          <TouchableOpacity style={[styles.updateBtn, styles.panelActionsBtn]} onPress={onUpdate}>
+            <Text style={styles.updateBtnText}>✏️ Update</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </Animated.View>
   );
@@ -948,6 +964,15 @@ const styles = StyleSheet.create({
     borderColor: "#E24B4A",
   },
   reportBtnText: { color: "#E24B4A", fontSize: 16, fontWeight: "700" },
+  updateBtn: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: "#378ADD",
+  },
+  updateBtnText: { color: "#378ADD", fontSize: 16, fontWeight: "700" },
 
   // Zoom-out hint bar
   zoomHint: {

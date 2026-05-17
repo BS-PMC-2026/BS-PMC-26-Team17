@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Alert, ActivityIndicator, Switch,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
 
@@ -12,6 +13,7 @@ const PLACE_TYPES = ['public shelter', 'school', 'parking', 'other'];
 const ACCESS_STATUSES = ['open', 'closed', 'locked', 'unknown'];
 
 export default function AddShelterScreen() {
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -88,7 +90,7 @@ export default function AddShelterScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <Text style={styles.header}>Add New Shelter</Text>
       <Text style={styles.subHeader}>Fill in the details to add the shelter to the database</Text>
 
