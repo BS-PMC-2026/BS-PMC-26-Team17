@@ -3,9 +3,9 @@ name: CI - ToSafePlace
 # Runs on every push and pull request to main branch
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev,hackton-2026]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev,hackton-2026]
 
 jobs:
   # JOB 1: Backend (Python + FastAPI)
