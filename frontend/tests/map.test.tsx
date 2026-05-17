@@ -421,3 +421,53 @@ describe('Gear shortcut', () => {
     expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/settings'));
   });
 });
+
+// ─── Admin visibility filtering (isActive / isVisibleOnMap) ──────────────────
+
+describe('Admin visibility filtering', () => {
+  // Helper — returns the latest setShelters payload that flowed into the WebView.
+  const lastSetShelters = () => {
+    const msgs = messagesOfType('setShelters');
+    return msgs[msgs.length - 1]?.data ?? [];
+  };
+
+  it('hides shelters flagged as isActive=false', async () => {
+    const visible  = { ...SHELTER_A, name: 'Visible',  id: 'v1' };
+    const inactive = { ...SHELTER_A, name: 'Inactive', id: 'i1', isActive: false };
+    global.fetch = makeFetchWithShelters([visible, inactive]);
+    grantLocation();
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+    // setShelters is gated on webReady; emit the ready event from the WebView.
+    await emitFromWeb({ type: 'ready' });
+
+    await waitFor(() => expect(lastSetShelters().length).toBe(1));
+    expect(lastSetShelters().map((s: any) => s.id)).toEqual(['v1']);
+  });
+
+  it('hides shelters flagged as isVisibleOnMap=false', async () => {
+    const visible = { ...SHELTER_A, name: 'Visible', id: 'v2' };
+    const hidden  = { ...SHELTER_A, name: 'Hidden',  id: 'h2', isVisibleOnMap: false };
+    global.fetch = makeFetchWithShelters([visible, hidden]);
+    grantLocation();
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+    await emitFromWeb({ type: 'ready' });
+
+    await waitFor(() => expect(lastSetShelters().length).toBe(1));
+    expect(lastSetShelters().map((s: any) => s.id)).toEqual(['v2']);
+  });
+
+  it('shows shelters when isActive/isVisibleOnMap are absent (back-compat)', async () => {
+    // Neither flag set — should still be rendered.
+    const a = { ...SHELTER_A, name: 'A', id: 'a' };
+    const b = { ...SHELTER_A, name: 'B', id: 'b' };
+    global.fetch = makeFetchWithShelters([a, b]);
+    grantLocation();
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+    await emitFromWeb({ type: 'ready' });
+
+    await waitFor(() => expect(lastSetShelters().length).toBe(2));
+  });
+});

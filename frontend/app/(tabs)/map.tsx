@@ -39,6 +39,10 @@ type ShelterPin = {
   shouldBeOpen?: boolean;
   lastReportAt?: string;
   lastReportType?: string;
+  // Admin flags — when `false`, the shelter is hidden from the map entirely.
+  // `undefined` is treated as "no opinion" → still shown (back-compat).
+  isActive?: boolean;
+  isVisibleOnMap?: boolean;
 };
 
 // Build the query string for /shelter-details — all values become strings.
@@ -250,6 +254,12 @@ export default function MapScreen() {
         for (const sh of shelters) {
           const lat = sh.lat ?? sh.latitude;
           const lng = sh.lng ?? sh.longitude;
+          // Admins can flag a shelter as `isActive=false` (no longer exists)
+          // or `isVisibleOnMap=false` (hidden from public view). Skip both.
+          // Undefined values are kept (back-compat with older records).
+          if (sh.isActive === false || sh.isVisibleOnMap === false) {
+            continue;
+          }
           if (typeof lat === "number" && typeof lng === "number" && lat !== 0) {
             pins.push({
               id: sh.id ?? sh._id ?? `${lat}-${lng}-${sh.name}`,
@@ -273,6 +283,8 @@ export default function MapScreen() {
               shouldBeOpen: sh.shouldBeOpen,
               lastReportAt: sh.lastReportAt,
               lastReportType: sh.lastReportType,
+              isActive: sh.isActive,
+              isVisibleOnMap: sh.isVisibleOnMap,
             });
           }
         }
