@@ -1,0 +1,59 @@
+name: Deploy Backend to Azure
+
+# Runs only when the backend (or this workflow) changes, so frontend-only
+# commits don't trigger a slow Python deploy.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:    # also allow manual runs from the Actions tab
+
+env:
+  AZURE_WEBAPP_NAME: tosafeplace-api    # The Azure resource name (NOT the full URL)
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Run the backend test suite before deploying. If tests fail, no deploy.
+      - name: Install backend dependencies
+        working-directory: Backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run backend tests
+        working-directory: Backend
+        run: pytest --tb=short -q
+
+      # Package just the Backend folder. Azure's Oryx build (triggered by the
+      # SCM_DO_BUILD_DURING_DEPLOYMENT app setting) will install requirements
+      # on the server and use the Startup Command we configured in the portal.
+      - name: Zip Backend for deployment
+        run: |
+          cd Backend
+          zip -r ../backend-release.zip . \
+            -x '__pycache__/*' '**/__pycache__/*' '*.pyc' \
+               'tests/*' '.pytest_cache/*' \
+               'venv/*' '.venv/*' '.env'
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: backend-release.zip
