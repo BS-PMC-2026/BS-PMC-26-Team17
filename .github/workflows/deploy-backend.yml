@@ -4,7 +4,7 @@ name: Deploy Backend to Azure
 # commits don't trigger a slow Python deploy.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - 'Backend/**'
       - '.github/workflows/deploy-backend.yml'
