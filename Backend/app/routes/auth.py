@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import secrets
+from bson import ObjectId
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.core.database import db
@@ -235,3 +236,43 @@ async def reset_password(body: ResetPasswordRequest):
     await db["PasswordReset"].delete_one({"email": email})
 
     return {"message": "Password reset successful."}
+
+
+# ── Push-token registration ─────────────────────────────────────────────────
+# The mobile app calls this after login so the backend can address pushes
+# to the user. We always overwrite — a user may switch devices, and stale
+# tokens stop receiving anyway.
+
+
+class PushTokenRequest(BaseModel):
+    user_id: str
+    push_token: str
+
+
+@router.post("/push-token")
+async def save_push_token(body: PushTokenRequest):
+    try:
+        result = await db["User"].update_one(
+            {"_id": ObjectId(body.user_id)},
+            {"$set": {"expoPushToken": body.push_token}},
+        )
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {"message": "Push token saved"}
+
+
+@router.delete("/push-token/{user_id}")
+async def clear_push_token(user_id: str):
+    """Called on logout so notifications don't follow the previous user."""
+    try:
+        await db["User"].update_one(
+            {"_id": ObjectId(user_id)},
+            {"$unset": {"expoPushToken": ""}},
+        )
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    return {"message": "Push token cleared"}
