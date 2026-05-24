@@ -1,5 +1,9 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  registerForPushNotifications,
+  clearPushNotifications,
+} from '@/services/notifications';
 
 type User = {
   id: string;
@@ -40,14 +44,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loadUser();
   }, []);
 
+  // Re-register the push token whenever an admin user is set (login OR
+  // app restart with a stored admin user). Regular users aren't asked for
+  // notification permission since they don't receive any.
+  useEffect(() => {
+    if (user?.role === 'admin' && user.id) {
+      registerForPushNotifications(user.id).catch((e) =>
+        console.log('[auth] push registration failed:', e),
+      );
+    }
+  }, [user]);
+
   const login = async (userData: User) => {
     setUser(userData);
     await AsyncStorage.setItem('user', JSON.stringify(userData));
   };
 
   const logout = async () => {
+    const prevId = user?.id;
     setUser(null);
     await AsyncStorage.removeItem('user');
+    // Tell the server to stop pushing to this device. Fire-and-forget so a
+    // network error doesn't block the logout.
+    if (prevId) {
+      clearPushNotifications(prevId).catch(() => {});
+    }
   };
 
   return (
