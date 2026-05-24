@@ -277,4 +277,4 @@ Auto-generated docs are available at `http://localhost:8000/docs` once the backe
 
 ## Team
 
-BS-PMC-26 — Team 17 (Ben-Gurion University / Sami Shamoon, project management course).
+BS-PMC-26 — Team 17 (Sami Shamoon, project management course).
