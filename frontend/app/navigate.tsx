@@ -8,6 +8,7 @@ import * as Location from 'expo-location';
 import { useLocalSearchParams, router } from 'expo-router';
 import { NavigationService, RouteResult } from '@/services/NavigationService';
 import type { Mode, Coord } from '@/services/NavigationService';
+import SimJoystick from '@/components/SimJoystick';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -142,6 +143,10 @@ export default function NavigateScreen() {
   const [error, setError]               = useState('');
   const [routeCache, setRouteCache]     = useState<Partial<Record<Mode, RouteResult>>>({});
   const [webReady, setWebReady]         = useState(false);
+  // Sim joystick — manual QA tool that fakes GPS without leaving the office.
+  // While `simOn`, the real GPS watch pauses and `simCoords` drives the map.
+  const [simOn, setSimOn]               = useState(false);
+  const [simCoords, setSimCoords]       = useState<Coord | null>(null);
 
   // Helper — send a JSON message into the WebView
   const sendToWeb = useCallback((obj: any) => {
@@ -248,9 +253,9 @@ export default function NavigateScreen() {
     }
   };
 
-  // ─── GPS watch — starts only when navigating ─────────────────────────────
+  // ─── GPS watch — starts only when navigating AND sim is off ──────────────
   useEffect(() => {
-    if (phase !== 'navigating') return;
+    if (phase !== 'navigating' || simOn) return; // sim takes over when active
     let cancelled = false;
     Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, distanceInterval: 10 },
@@ -270,7 +275,56 @@ export default function NavigateScreen() {
       watchRef.current?.remove();
       watchRef.current = null;
     };
-  }, [phase, sendToWeb]);
+  }, [phase, simOn, sendToWeb]);
+
+  // ─── Sim joystick drives the map while active ────────────────────────────
+  useEffect(() => {
+    if (!simOn || !simCoords) return;
+    sendToWeb({ type: 'setUserLocation', lat: simCoords.latitude, lng: simCoords.longitude });
+    sendToWeb({ type: 'flyTo', lat: simCoords.latitude, lng: simCoords.longitude, zoom: 17 });
+    advanceOnRoute(simCoords);
+    // We intentionally omit `advanceOnRoute` from deps — it's a stable inline
+    // function defined below that closes over refs, not state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simOn, simCoords, sendToWeb]);
+
+  // 📍 button — fly the map to the user's current position. When the sim
+  // is on, we follow the sim marker (which is what's actually displayed).
+  const focusOnUser = () => {
+    const target = simOn ? simCoords : userLocation;
+    if (!target) return;
+    sendToWeb({ type: 'flyTo', lat: target.latitude, lng: target.longitude, zoom: 17 });
+  };
+
+  const toggleSim = () => {
+    if (simOn) {
+      setSimOn(false);
+      setSimCoords(null);
+      return;
+    }
+    // Seed the sim at the user's current real location (or the destination
+    // as a last-resort fallback so the marker has somewhere to go).
+    const seed = userLocation ?? dest;
+    setSimCoords(seed);
+    setSimOn(true);
+    // Snap the camera to that seed immediately — gives the user the same
+    // "you are here" feedback that the 📍 button would, without needing a
+    // second tap after turning the joystick on.
+    sendToWeb({ type: 'flyTo', lat: seed.latitude, lng: seed.longitude, zoom: 17 });
+  };
+
+  // Each joystick tick nudges the sim a tiny step in the pushed direction.
+  // STEP is the distance per fully-pushed knob per render (~11 m in lat).
+  const handleJoyMove = (dx: number, dy: number) => {
+    const STEP = 0.0001;
+    setSimCoords(prev => {
+      const base = prev ?? userLocation ?? dest;
+      return {
+        latitude:  base.latitude  - dy * STEP, // up on screen = north
+        longitude: base.longitude + dx * STEP,
+      };
+    });
+  };
 
   // ─── Update step / remaining polyline / ETA on every GPS tick ───────────
   function advanceOnRoute(pos: Coord) {
@@ -382,21 +436,53 @@ export default function NavigateScreen() {
           </Text>
         </View>
       ) : (
-        <WebView
-          ref={webRef}
-          style={s.map}
-          source={{ html: MAP_HTML }}
-          originWhitelist={['*']}
-          javaScriptEnabled
-          domStorageEnabled
-          onMessage={(event) => {
-            try {
-              const msg = JSON.parse(event.nativeEvent.data);
-              if (msg.type === 'ready') setWebReady(true);
-            } catch { /* ignore non-JSON */ }
-          }}
-          testID="navigate-webview"
-        />
+        <View style={s.mapWrap}>
+          <WebView
+            ref={webRef}
+            style={s.map}
+            source={{ html: MAP_HTML }}
+            originWhitelist={['*']}
+            javaScriptEnabled
+            domStorageEnabled
+            onMessage={(event) => {
+              try {
+                const msg = JSON.parse(event.nativeEvent.data);
+                if (msg.type === 'ready') setWebReady(true);
+              } catch { /* ignore non-JSON */ }
+            }}
+            testID="navigate-webview"
+          />
+
+          {/* 📍 current-location button — bottom-right corner. */}
+          <TouchableOpacity
+            style={s.locateBtn}
+            onPress={focusOnUser}
+            testID="locate-button"
+            accessibilityLabel="Center on my location"
+          >
+            <Text style={s.locateIcon}>📍</Text>
+          </TouchableOpacity>
+
+          {/* Sim toggle — sits just above 📍. Hidden by default; tap to
+              reveal the joystick for manual position simulation. */}
+          <TouchableOpacity
+            style={s.simToggle}
+            onPress={toggleSim}
+            testID="sim-toggle"
+            accessibilityLabel="Toggle sim joystick"
+          >
+            <Text style={s.simToggleIcon}>{simOn ? '🎮' : '👁️'}</Text>
+          </TouchableOpacity>
+
+          {/* Joystick itself — only mounted when the sim is on. Positioned
+              just above the toggle so the user can keep their thumb in the
+              corner without obscuring the route line. */}
+          {simOn && (
+            <View style={s.simJoyWrap} pointerEvents="box-none">
+              <SimJoystick onMove={handleJoyMove} />
+            </View>
+          )}
+        </View>
       )}
 
       <View style={[s.hud, arrived && s.hudArrived, isEmergency && !arrived && s.hudEmergency]}>
@@ -452,7 +538,34 @@ const s = StyleSheet.create({
   startBtnDisabled: { backgroundColor: '#93b9f5' },
   startBtnText:     { color: '#fff', fontSize: 17, fontWeight: '700' },
   // Map
+  mapWrap:          { flex: 1, position: 'relative' },
   map:              { flex: 1 },
+  // 📍 current-location — bottom-right.
+  locateBtn: {
+    position: 'absolute', bottom: 16, right: 16,
+    backgroundColor: '#fff', borderRadius: 24, width: 48, height: 48,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 4, elevation: 5,
+    zIndex: 10,
+  },
+  locateIcon: { fontSize: 22 },
+  // Sim joystick toggle — sits one button above 📍.
+  simToggle: {
+    position: 'absolute', bottom: 76, right: 16,
+    backgroundColor: '#fff', borderRadius: 24, width: 48, height: 48,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 4, elevation: 5,
+    zIndex: 10,
+  },
+  simToggleIcon: { fontSize: 22 },
+  // Joystick container — sits above the sim toggle so it doesn't cover
+  // either button or the HUD below.
+  simJoyWrap: {
+    position: 'absolute', bottom: 140, right: 16,
+    zIndex: 9,
+  },
   // HUD
   hud:              { backgroundColor: '#1a73e8', paddingHorizontal: 20, paddingVertical: 16, minHeight: 80, justifyContent: 'center' },
   hudArrived:       { backgroundColor: '#1D9E75' },
