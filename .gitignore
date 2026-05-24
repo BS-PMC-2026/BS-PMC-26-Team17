@@ -12,3 +12,8 @@ Backend/.env
 # Node / auto-generated caches
 node_modules/
 */node_modules/
+
+# Firebase / Google service credentials — never commit
+frontend/google-services.json
+frontend/firebase-service-account.json
+**/GoogleService-Info.plist
