@@ -254,7 +254,7 @@ async def test_list_broadcasts_filters_by_after(client):
 
     with patch("app.routes.MessageAll.broadcast.db", db):
         async with client as c:
-            r = await c.get(f"/api/broadcasts?after={now.isoformat()}")
+            r = await c.get("/api/broadcasts", params={"after": now.isoformat()})
 
     assert r.status_code == 200
     items = r.json()["items"]
