@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   View,
   StyleSheet,
@@ -14,6 +14,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/auth";
+import { AlertsService, type Alert as PikudAlert } from "@/services/AlertsService";
+import { OrefZonesService } from "@/services/OrefZonesService";
+import AlertBanner from "@/components/AlertBanner";
+import AlertInjectModal from "@/components/AlertInjectModal";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -232,6 +236,52 @@ export default function MapScreen() {
   const [webReady, setWebReady] = useState(false);
   // Home "do not notify" circle — loaded from settings (AsyncStorage)
   const [home, setHome] = useState<{ lat: number; lng: number; radius: number } | null>(null);
+  // Pikud HaOref alert state — banner + demo injection modal
+  const [activeAlert, setActiveAlert] = useState<PikudAlert | null>(null);
+  const [alertInjectOpen, setAlertInjectOpen] = useState(false);
+  // Tracks whether the official Pikud HaOref polygons finished loading.
+  // We use this to re-evaluate `userZone` once the data is available.
+  const [polygonsReady, setPolygonsReady] = useState(false);
+
+  // Subscribe to alerts (polling oref.org.il every 3s) for the lifetime of
+  // the map screen. The same hook also receives manual injections fired by
+  // the demo modal — both paths funnel into `setActiveAlert`.
+  useEffect(() => {
+    return AlertsService.subscribe(setActiveAlert);
+  }, []);
+
+  // Load the official Pikud HaOref polygons once. `OrefZonesService.load`
+  // is idempotent so calling it on every mount is safe.
+  useEffect(() => {
+    OrefZonesService.load().then(() => setPolygonsReady(true));
+  }, []);
+
+  // Resolve the user's Pikud HaOref zone. Order of preference:
+  //   1. The official polygon containing the user's coordinates.
+  //   2. The nearest shelter's `area` (`alertZone`) — coarse but workable
+  //      when polygons are not yet loaded or the user is just outside any
+  //      polygon (e.g. on a road boundary).
+  //   3. Plain "באר שבע" as a last-resort string.
+  const userZone = useMemo(() => {
+    if (!userLocation) return 'באר שבע';
+    if (polygonsReady) {
+      const zone = OrefZonesService.getZone(
+        userLocation.latitude,
+        userLocation.longitude,
+      );
+      if (zone) return zone;
+    }
+    let best: string | undefined;
+    let bestDist = Infinity;
+    for (const sh of shelterPins) {
+      if (!sh.area) continue;
+      const dLat = sh.latitude  - userLocation.latitude;
+      const dLng = sh.longitude - userLocation.longitude;
+      const d = dLat * dLat + dLng * dLng;
+      if (d < bestDist) { bestDist = d; best = sh.area; }
+    }
+    return best ?? 'באר שבע';
+  }, [userLocation, shelterPins, polygonsReady]);
 
   // Helper — send a JSON message into the WebView
   const sendToWeb = useCallback((obj: any) => {
@@ -619,6 +669,18 @@ export default function MapScreen() {
         <Text style={styles.gearIcon}>⚙️</Text>
       </TouchableOpacity>
 
+      {/* 🚨 demo-alert button — opens a modal that lets the user simulate
+          either an early-warning or an actual siren so the banner can be
+          demonstrated without waiting for a real attack. */}
+      <TouchableOpacity
+        style={styles.demoAlertButton}
+        onPress={() => setAlertInjectOpen(true)}
+        testID="demo-alert-btn"
+        accessibilityLabel="Simulate an alert"
+      >
+        <Text style={styles.demoAlertIcon}>🚨</Text>
+      </TouchableOpacity>
+
       {/* Location button */}
       {locationGranted && (
         <TouchableOpacity
@@ -660,6 +722,14 @@ export default function MapScreen() {
           </View>
         </View>
       )}
+
+      {/* Pikud HaOref alert — banner overlay + demo injection modal */}
+      <AlertBanner alert={activeAlert} onDismiss={() => setActiveAlert(null)} />
+      <AlertInjectModal
+        visible={alertInjectOpen}
+        onClose={() => setAlertInjectOpen(false)}
+        area={userZone}
+      />
     </View>
   );
 }
@@ -724,6 +794,26 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   gearIcon: { fontSize: 20 },
+
+  // 🚨 demo-alert button — sits just under the gear, same left column.
+  demoAlertButton: {
+    position: 'absolute',
+    top: 162,
+    left: 12,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 10,
+  },
+  demoAlertIcon: { fontSize: 20 },
 
   locationButton: {
     position: "absolute",

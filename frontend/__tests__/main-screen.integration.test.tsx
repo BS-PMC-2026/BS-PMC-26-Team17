@@ -66,6 +66,30 @@ jest.mock('react-native-safe-area-context', () => ({
   SafeAreaProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
+// expo-notifications is pulled in transitively via the auth context. The
+// package isn't installed in the test env yet, so we stub the whole module.
+jest.mock('expo-notifications', () => ({
+  setNotificationHandler: jest.fn(),
+  getPermissionsAsync:    jest.fn(() => Promise.resolve({ status: 'granted' })),
+  requestPermissionsAsync:jest.fn(() => Promise.resolve({ status: 'granted' })),
+  getExpoPushTokenAsync:  jest.fn(() => Promise.resolve({ data: 'mock-token' })),
+  scheduleNotificationAsync: jest.fn(),
+  AndroidImportance: { MAX: 5 },
+  setNotificationChannelAsync: jest.fn(),
+}), { virtual: true });
+jest.mock('expo-constants', () => ({
+  default: { expoConfig: { extra: {} } },
+  expoConfig: { extra: {} },
+}), { virtual: true });
+
+// AlertsService — stub so it doesn't try to poll oref.org.il during tests.
+jest.mock('@/services/AlertsService', () => ({
+  AlertsService: {
+    subscribe: jest.fn(() => () => {}),
+    injectFakeAlert: jest.fn(),
+  },
+}));
+
 // expo-location — provide a granted location so the map mounts past `loading`.
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(() =>
