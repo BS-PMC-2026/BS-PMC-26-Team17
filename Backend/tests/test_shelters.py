@@ -22,6 +22,8 @@ async def test_get_shelters_returns_list(async_client):
     mock_shelter = {
         "_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0e1"),
         "name": "מקלט בן גוריון",
+        "lat": 31.2518,
+        "lng": 34.7913,
         "address": "בן גוריון 33",
         "area": "מרכז",
         "placeType": "public shelter",
@@ -107,8 +109,8 @@ async def test_multiple_filters(async_client):
 @pytest.mark.asyncio
 async def test_returns_correct_count(async_client):
     shelters = [
-        {"_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0a1"), "name": "מקלט א", "accessStatus": "open"},
-        {"_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0a2"), "name": "מקלט ב", "accessStatus": "open"},
+        {"_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0a1"), "name": "מקלט א", "lat": 31.25, "lng": 34.79, "accessStatus": "open"},
+        {"_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0a2"), "name": "מקלט ב", "lat": 31.26, "lng": 34.80, "accessStatus": "open"},
     ]
     with patch("app.routes.shelters.db") as mock_db:
         mock_db.__getitem__.return_value.find.return_value.limit.return_value = make_async_iter(shelters)
@@ -127,6 +129,8 @@ async def test_status_open_filters_correct_shelters(async_client):
     open_shelter = {
         "_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0c1"),
         "name": "מקלט פתוח",
+        "lat": 31.25,
+        "lng": 34.79,
         "accessStatus": "open",
     }
     with patch("app.routes.shelters.db") as mock_db:
@@ -149,6 +153,8 @@ async def test_status_locked_filters_correct_shelters(async_client):
     locked_shelter = {
         "_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0c2"),
         "name": "מקלט נעול",
+        "lat": 31.25,
+        "lng": 34.79,
         "accessStatus": "locked",
     }
     with patch("app.routes.shelters.db") as mock_db:
@@ -171,6 +177,8 @@ async def test_city_filter_passes_correct_query(async_client):
     shelter = {
         "_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0c3"),
         "name": "מקלט בבאר שבע",
+        "lat": 31.25,
+        "lng": 34.79,
         "city": "Be'er Sheva",
         "accessStatus": "open",
     }
@@ -181,7 +189,8 @@ async def test_city_filter_passes_correct_query(async_client):
     assert response.status_code == 200
     data = response.json()
     query = mock_db.__getitem__.return_value.find.call_args.args[0]
-    assert query.get("city") == "Be'er Sheva"
+    # Route now uses a case-insensitive regex match for city
+    assert query.get("city") == {"$regex": "^Be'er Sheva$", "$options": "i"}
     assert data["count"] == 1
     assert data["shelters"][0]["city"] == "Be'er Sheva"
 
@@ -192,6 +201,8 @@ async def test_area_filter_passes_correct_query(async_client):
     shelter = {
         "_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0c4"),
         "name": "מקלט צפון",
+        "lat": 31.25,
+        "lng": 34.79,
         "area": "North",
         "accessStatus": "open",
     }
@@ -202,7 +213,8 @@ async def test_area_filter_passes_correct_query(async_client):
     assert response.status_code == 200
     data = response.json()
     query = mock_db.__getitem__.return_value.find.call_args.args[0]
-    assert query.get("area") == "North"
+    # Route maps the `area` query param to the `alertZone` DB field
+    assert query.get("alertZone") == "North"
     assert data["count"] == 1
     assert data["shelters"][0]["area"] == "North"
 
@@ -215,6 +227,8 @@ async def test_combined_filters_build_correct_query(async_client):
     shelter = {
         "_id": ObjectId("65a1b2c3d4e5f6a7b8c9d0c5"),
         "name": "מקלט משולב",
+        "lat": 31.25,
+        "lng": 34.79,
         "city": "Be'er Sheva",
         "area": "North",
         "accessStatus": "open",
@@ -226,8 +240,8 @@ async def test_combined_filters_build_correct_query(async_client):
     assert response.status_code == 200
     data = response.json()
     query = mock_db.__getitem__.return_value.find.call_args.args[0]
-    assert query.get("city") == "Be'er Sheva"
-    assert query.get("area") == "North"
+    assert query.get("city") == {"$regex": "^Be'er Sheva$", "$options": "i"}
+    assert query.get("alertZone") == "North"
     assert query.get("accessStatus") == "open"
     assert data["count"] == 1
 
@@ -274,6 +288,8 @@ async def test_create_shelter_admin_success(async_client):
             "user_id": ADMIN_ID,
             "name": "מקלט חדש",
             "address": "רחוב הרצל 1",
+            "lat": 31.25,
+            "lng": 34.79,
         })
     assert response.status_code == 200
     data = response.json()
@@ -291,6 +307,8 @@ async def test_create_shelter_non_admin_forbidden(async_client):
             "user_id": NON_ADMIN_ID,
             "name": "מקלט חדש",
             "address": "רחוב הרצל 1",
+            "lat": 31.25,
+            "lng": 34.79,
         })
     assert response.status_code == 403
 

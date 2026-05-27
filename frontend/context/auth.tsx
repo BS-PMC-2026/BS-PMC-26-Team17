@@ -1,5 +1,9 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  registerForPushNotifications,
+  clearPushNotifications,
+} from '@/services/notifications';
 
 type User = {
   id: string;
@@ -40,14 +44,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loadUser();
   }, []);
 
+  // Re-register the push token whenever any user is set (login OR app
+  // restart with a stored user). Admins receive report alerts; regular
+  // users receive geofence exit/enter messages, so both roles need a token.
+  useEffect(() => {
+    if (user?.id) {
+      registerForPushNotifications(user.id).catch((e) =>
+        console.log('[auth] push registration failed:', e),
+      );
+    }
+  }, [user]);
+
   const login = async (userData: User) => {
     setUser(userData);
     await AsyncStorage.setItem('user', JSON.stringify(userData));
   };
 
   const logout = async () => {
+    const prevId = user?.id;
     setUser(null);
     await AsyncStorage.removeItem('user');
+    // Tell the server to stop pushing to this device. Fire-and-forget so a
+    // network error doesn't block the logout.
+    if (prevId) {
+      clearPushNotifications(prevId).catch(() => {});
+    }
   };
 
   return (

@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ActivityIndicator, SafeAreaView,
 } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
+import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { useLocalSearchParams, router } from 'expo-router';
 import { NavigationService, RouteResult } from '@/services/NavigationService';
 import type { Mode, Coord } from '@/services/NavigationService';
+import SimJoystick from '@/components/SimJoystick';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -16,6 +17,100 @@ const MODES: { key: Mode; label: string; icon: string; desc: string }[] = [
   { key: 'cycling', label: 'Cycling',  icon: '🚴', desc: '~15 km/h' },
   { key: 'driving', label: 'Driving',  icon: '🚗', desc: 'by road'  },
 ];
+
+// ─── Leaflet map HTML (in-WebView runtime) ───────────────────────────────────
+// Same pattern as the main map: a self-contained Leaflet instance that the RN
+// side talks to via JSON postMessage. Polyline + user marker + destination.
+const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html,body,#map { margin:0; padding:0; width:100vw; height:100vh; }
+  .user-dot {
+    width:18px;height:18px;border-radius:9px;background:#1a73e8;
+    border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.4);
+  }
+  .dest-pin {
+    width:22px;height:22px;border-radius:50% 50% 50% 0;
+    background:#e53935;border:2px solid #fff;
+    transform:rotate(-45deg);box-shadow:0 0 4px rgba(0,0,0,.4);
+  }
+</style></head><body>
+<div id="map"></div>
+<script>
+  var map = L.map('map', { zoomControl:false, attributionControl:false })
+              .setView([31.5, 34.8], 13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 19 }).addTo(map);
+
+  var userMarker = null;
+  var destMarker = null;
+  var routeLine  = null;
+
+  function send(obj) {
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+    }
+  }
+
+  function handle(raw) {
+    var msg;
+    try { msg = JSON.parse(raw); } catch(_) { return; }
+
+    if (msg.type === 'setDestination') {
+      var ll = [msg.lat, msg.lng];
+      if (destMarker) { destMarker.setLatLng(ll); }
+      else {
+        destMarker = L.marker(ll, {
+          icon: L.divIcon({ className:'', html:'<div class="dest-pin"></div>', iconSize:[22,22], iconAnchor:[11,22] }),
+        }).addTo(map);
+      }
+    }
+
+    else if (msg.type === 'setUserLocation') {
+      var ll = [msg.lat, msg.lng];
+      if (userMarker) { userMarker.setLatLng(ll); }
+      else {
+        userMarker = L.marker(ll, {
+          icon: L.divIcon({ className:'', html:'<div class="user-dot"></div>', iconSize:[18,18] }),
+          interactive: false,
+          zIndexOffset: 1000,
+        }).addTo(map);
+      }
+    }
+
+    else if (msg.type === 'setRoute') {
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      if (msg.data && msg.data.coords && msg.data.coords.length >= 2) {
+        var latlngs = msg.data.coords.map(function(c) { return [c.lat, c.lng]; });
+        routeLine = L.polyline(latlngs, {
+          color: msg.data.color || '#1a73e8',
+          weight: 5,
+          opacity: 0.85,
+        }).addTo(map);
+      }
+    }
+
+    else if (msg.type === 'flyTo') {
+      map.setView([msg.lat, msg.lng], msg.zoom || 16, { animate: true, duration: 0.4 });
+    }
+
+    else if (msg.type === 'fitBounds') {
+      if (msg.coords && msg.coords.length >= 2) {
+        var latlngs = msg.coords.map(function(c) { return [c.lat, c.lng]; });
+        map.fitBounds(latlngs, { padding: [50, 50] });
+      }
+    }
+  }
+
+  window.addEventListener('message', function(e) { handle(e.data); });
+  document.addEventListener('message', function(e) { handle(e.data); });
+
+  send({ type:'ready' });
+</script>
+</body></html>`;
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -28,26 +123,44 @@ export default function NavigateScreen() {
   const dest: Coord = { latitude: destLat, longitude: destLng };
   const isEmergency = emergency === 'true';
 
-  const mapRef         = useRef<MapView>(null);
+  const webRef         = useRef<WebView>(null);
   const watchRef       = useRef<Location.LocationSubscription | null>(null);
   const stepsRef       = useRef<any[]>([]);
   const polylineRef    = useRef<Coord[]>([]);
   const modeRef        = useRef<Mode>('foot');
   const recalcCooldown = useRef(false);
 
-  const [phase, setPhase]                     = useState<'select' | 'navigating'>(
-    isEmergency ? 'navigating' : 'select'   // emergency → straight to navigation
+  const [phase, setPhase]               = useState<'select' | 'navigating'>(
+    isEmergency ? 'navigating' : 'select'
   );
-  const [mode, setMode]                       = useState<Mode>('foot');
-  const [userLocation, setUserLocation]       = useState<Coord | null>(null);
-  const [displayPolyline, setDisplayPolyline] = useState<Coord[]>([]);
-  const [steps, setSteps]                     = useState<any[]>([]);
-  const [currentStep, setCurrentStep]         = useState(0);
-  const [eta, setEta]                         = useState('');
-  const [distance, setDistance]               = useState('');
-  const [loading, setLoading]                 = useState(isEmergency);
-  const [error, setError]                     = useState('');
-  const [routeCache, setRouteCache]           = useState<Partial<Record<Mode, RouteResult>>>({});
+  const [mode, setMode]                 = useState<Mode>('foot');
+  const [userLocation, setUserLocation] = useState<Coord | null>(null);
+  const [steps, setSteps]               = useState<any[]>([]);
+  const [currentStep, setCurrentStep]   = useState(0);
+  const [eta, setEta]                   = useState('');
+  const [distance, setDistance]         = useState('');
+  const [loading, setLoading]           = useState(isEmergency);
+  const [error, setError]               = useState('');
+  const [routeCache, setRouteCache]     = useState<Partial<Record<Mode, RouteResult>>>({});
+  const [webReady, setWebReady]         = useState(false);
+  // Sim joystick — manual QA tool that fakes GPS without leaving the office.
+  // While `simOn`, the real GPS watch pauses and `simCoords` drives the map.
+  const [simOn, setSimOn]               = useState(false);
+  const [simCoords, setSimCoords]       = useState<Coord | null>(null);
+
+  // Helper — send a JSON message into the WebView
+  const sendToWeb = useCallback((obj: any) => {
+    webRef.current?.postMessage(JSON.stringify(obj));
+  }, []);
+
+  // Convert RN Coord polyline → Leaflet-friendly {lat,lng} list and push it.
+  const pushRouteToMap = useCallback((coords: Coord[]) => {
+    const data = coords.map(c => ({ lat: c.latitude, lng: c.longitude }));
+    sendToWeb({
+      type: 'setRoute',
+      data: { coords: data, color: isEmergency ? '#e53935' : '#1a73e8' },
+    });
+  }, [sendToWeb, isEmergency]);
 
   // ─── Initial location ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -55,13 +168,10 @@ export default function NavigateScreen() {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') { setError('Location permission needed'); return; }
 
-      // getLastKnownPositionAsync → instant (cache from map), enough for preview
       const last = await Location.getLastKnownPositionAsync();
       if (last) {
         setUserLocation({ latitude: last.coords.latitude, longitude: last.coords.longitude });
       }
-
-      // getCurrentPositionAsync → more accurate, for actual navigation
       const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       setUserLocation({ latitude: fresh.coords.latitude, longitude: fresh.coords.longitude });
     })();
@@ -69,7 +179,7 @@ export default function NavigateScreen() {
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // Fetch all three routes in parallel in the background
+  // Fetch all three routes in parallel in the background (for the select screen)
   useEffect(() => {
     if (!userLocation || isEmergency) return;
     const modes: Mode[] = ['foot', 'cycling', 'driving'];
@@ -79,6 +189,28 @@ export default function NavigateScreen() {
         .catch(e => console.warn(`[Nav] ${m} fetch failed:`, e));
     });
   }, [userLocation]);
+
+  // ─── Push destination + initial user marker once the WebView reports ready ─
+  useEffect(() => {
+    if (!webReady) return;
+    sendToWeb({ type: 'setDestination', lat: destLat, lng: destLng });
+    if (userLocation) {
+      sendToWeb({
+        type: 'setUserLocation',
+        lat: userLocation.latitude,
+        lng: userLocation.longitude,
+      });
+    }
+  }, [webReady, destLat, destLng, userLocation, sendToWeb]);
+
+  // ─── Whenever we transition to the navigating screen with a route, draw it
+  //     and fit the bounds so both endpoints are visible.
+  useEffect(() => {
+    if (!webReady || phase !== 'navigating' || polylineRef.current.length === 0) return;
+    pushRouteToMap(polylineRef.current);
+    const coords = polylineRef.current.map(c => ({ lat: c.latitude, lng: c.longitude }));
+    sendToWeb({ type: 'fitBounds', coords });
+  }, [webReady, phase, pushRouteToMap, sendToWeb]);
 
   // ─── Emergency: auto-start navigation as soon as location is available ─
   useEffect(() => {
@@ -93,21 +225,22 @@ export default function NavigateScreen() {
   function applyRoute(result: RouteResult) {
     polylineRef.current = result.polyline;
     stepsRef.current    = result.steps;
-    setDisplayPolyline(result.polyline);
     setSteps(result.steps);
     setCurrentStep(0);
     setEta(result.etaLabel);
     setDistance(result.distLabel);
     setPhase('navigating');
+    // Draw the route now (also re-runs via the webReady effect if needed)
+    pushRouteToMap(result.polyline);
+    const coords = result.polyline.map(c => ({ lat: c.latitude, lng: c.longitude }));
+    sendToWeb({ type: 'fitBounds', coords });
   }
 
-  // ─── התחלת ניווט ידנית (לחיצת Start) ────────────────────────────────────
+  // ─── Manual Start ───────────────────────────────────────────────────────
   const startNavigation = async () => {
     if (!userLocation) { setError('Waiting for location...'); return; }
-    // אם המסלול כבר נשלף ברקע — נשתמש בו מיד (ללא fetch נוסף)
     const cached = routeCache[mode];
     if (cached) { applyRoute(cached); return; }
-    // fallback: שליפה עכשיו
     setLoading(true);
     setError('');
     try {
@@ -120,21 +253,20 @@ export default function NavigateScreen() {
     }
   };
 
-  // ─── GPS watch — starts only when navigating, safely cleaned on unmount ─
+  // ─── GPS watch — starts only when navigating AND sim is off ──────────────
   useEffect(() => {
-    if (phase !== 'navigating') return;
+    if (phase !== 'navigating' || simOn) return; // sim takes over when active
     let cancelled = false;
     Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, distanceInterval: 10 },
       (loc) => {
         const coords: Coord = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-        mapRef.current?.animateToRegion(
-          { ...coords, latitudeDelta: 0.005, longitudeDelta: 0.005 }, 300
-        );
+        // Move the in-map user dot and pan the camera to follow the user.
+        sendToWeb({ type: 'setUserLocation', lat: coords.latitude, lng: coords.longitude });
+        sendToWeb({ type: 'flyTo', lat: coords.latitude, lng: coords.longitude, zoom: 17 });
         advanceOnRoute(coords);
       }
     ).then(sub => {
-      // If unmounted before subscription was created, cancel immediately
       if (cancelled) { sub.remove(); return; }
       watchRef.current = sub;
     });
@@ -143,9 +275,58 @@ export default function NavigateScreen() {
       watchRef.current?.remove();
       watchRef.current = null;
     };
-  }, [phase]);
+  }, [phase, simOn, sendToWeb]);
 
-  // ─── עדכון מיקום בזמן ניווט ──────────────────────────────────────────────
+  // ─── Sim joystick drives the map while active ────────────────────────────
+  useEffect(() => {
+    if (!simOn || !simCoords) return;
+    sendToWeb({ type: 'setUserLocation', lat: simCoords.latitude, lng: simCoords.longitude });
+    sendToWeb({ type: 'flyTo', lat: simCoords.latitude, lng: simCoords.longitude, zoom: 17 });
+    advanceOnRoute(simCoords);
+    // We intentionally omit `advanceOnRoute` from deps — it's a stable inline
+    // function defined below that closes over refs, not state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simOn, simCoords, sendToWeb]);
+
+  // 📍 button — fly the map to the user's current position. When the sim
+  // is on, we follow the sim marker (which is what's actually displayed).
+  const focusOnUser = () => {
+    const target = simOn ? simCoords : userLocation;
+    if (!target) return;
+    sendToWeb({ type: 'flyTo', lat: target.latitude, lng: target.longitude, zoom: 17 });
+  };
+
+  const toggleSim = () => {
+    if (simOn) {
+      setSimOn(false);
+      setSimCoords(null);
+      return;
+    }
+    // Seed the sim at the user's current real location (or the destination
+    // as a last-resort fallback so the marker has somewhere to go).
+    const seed = userLocation ?? dest;
+    setSimCoords(seed);
+    setSimOn(true);
+    // Snap the camera to that seed immediately — gives the user the same
+    // "you are here" feedback that the 📍 button would, without needing a
+    // second tap after turning the joystick on.
+    sendToWeb({ type: 'flyTo', lat: seed.latitude, lng: seed.longitude, zoom: 17 });
+  };
+
+  // Each joystick tick nudges the sim a tiny step in the pushed direction.
+  // STEP is the distance per fully-pushed knob per render (~11 m in lat).
+  const handleJoyMove = (dx: number, dy: number) => {
+    const STEP = 0.0001;
+    setSimCoords(prev => {
+      const base = prev ?? userLocation ?? dest;
+      return {
+        latitude:  base.latitude  - dy * STEP, // up on screen = north
+        longitude: base.longitude + dx * STEP,
+      };
+    });
+  };
+
+  // ─── Update step / remaining polyline / ETA on every GPS tick ───────────
   function advanceOnRoute(pos: Coord) {
     if (stepsRef.current.length > 0) {
       setCurrentStep(NavigationService.nearestStepIndex(stepsRef.current, pos));
@@ -153,13 +334,14 @@ export default function NavigateScreen() {
     if (polylineRef.current.length > 0) {
       const { polyline: remaining, distanceM } =
         NavigationService.remainingRoute(polylineRef.current, pos);
-      setDisplayPolyline(remaining);
+      // Re-draw shrinking polyline as the user advances along the route
+      pushRouteToMap(remaining);
       setDistance(NavigationService.formatDistance(distanceM));
       setEta(NavigationService.formatDuration(
         NavigationService.calculateETA(distanceM, modeRef.current)
       ));
 
-      // סטייה מהמסלול → חישוב מחדש
+      // Off-route → recalculate route from the new position
       if (!recalcCooldown.current &&
           NavigationService.isOffRoute(pos, polylineRef.current)) {
         recalcCooldown.current = true;
@@ -171,7 +353,7 @@ export default function NavigateScreen() {
 
   const arrived = steps[currentStep]?.maneuver?.type === 'arrive';
 
-  // מסך בחירת מצב נסיעה
+  // ─── Mode-select screen ─────────────────────────────────────────────────
   if (phase === 'select') {
     return (
       <SafeAreaView style={s.container}>
@@ -187,8 +369,8 @@ export default function NavigateScreen() {
 
         <View style={s.modeCards}>
           {MODES.map(m => {
-            const cached   = routeCache[m.key];
-            const etaLabel = cached ? cached.etaLabel  : null;
+            const cached    = routeCache[m.key];
+            const etaLabel  = cached ? cached.etaLabel  : null;
             const distLabel = cached ? cached.distLabel : null;
             return (
               <TouchableOpacity
@@ -230,7 +412,7 @@ export default function NavigateScreen() {
     );
   }
 
-  // מסך ניווט
+  // ─── Navigation screen ──────────────────────────────────────────────────
   return (
     <SafeAreaView style={s.container}>
       <View style={s.header}>
@@ -254,30 +436,53 @@ export default function NavigateScreen() {
           </Text>
         </View>
       ) : (
-        <MapView
-          ref={mapRef}
-          style={s.map}
-          provider={PROVIDER_DEFAULT}
-          showsUserLocation={true}
-          initialRegion={{
-            latitude:  userLocation?.latitude  ?? destLat,
-            longitude: userLocation?.longitude ?? destLng,
-            latitudeDelta: 0.05, longitudeDelta: 0.05,
-          }}
-        >
-          {displayPolyline.length >= 2 && (
-            <Polyline
-              coordinates={displayPolyline}
-              strokeColor={isEmergency ? '#e53935' : '#1a73e8'}
-              strokeWidth={4}
-            />
-          )}
-          <Marker
-            coordinate={dest}
-            pinColor="red"
-            title={name || 'Shelter'}
+        <View style={s.mapWrap}>
+          <WebView
+            ref={webRef}
+            style={s.map}
+            source={{ html: MAP_HTML }}
+            originWhitelist={['*']}
+            javaScriptEnabled
+            domStorageEnabled
+            onMessage={(event) => {
+              try {
+                const msg = JSON.parse(event.nativeEvent.data);
+                if (msg.type === 'ready') setWebReady(true);
+              } catch { /* ignore non-JSON */ }
+            }}
+            testID="navigate-webview"
           />
-        </MapView>
+
+          {/* 📍 current-location button — bottom-right corner. */}
+          <TouchableOpacity
+            style={s.locateBtn}
+            onPress={focusOnUser}
+            testID="locate-button"
+            accessibilityLabel="Center on my location"
+          >
+            <Text style={s.locateIcon}>📍</Text>
+          </TouchableOpacity>
+
+          {/* Sim toggle — sits just above 📍. Hidden by default; tap to
+              reveal the joystick for manual position simulation. */}
+          <TouchableOpacity
+            style={s.simToggle}
+            onPress={toggleSim}
+            testID="sim-toggle"
+            accessibilityLabel="Toggle sim joystick"
+          >
+            <Text style={s.simToggleIcon}>{simOn ? '🎮' : '👁️'}</Text>
+          </TouchableOpacity>
+
+          {/* Joystick itself — only mounted when the sim is on. Positioned
+              just above the toggle so the user can keep their thumb in the
+              corner without obscuring the route line. */}
+          {simOn && (
+            <View style={s.simJoyWrap} pointerEvents="box-none">
+              <SimJoystick onMove={handleJoyMove} />
+            </View>
+          )}
+        </View>
       )}
 
       <View style={[s.hud, arrived && s.hudArrived, isEmergency && !arrived && s.hudEmergency]}>
@@ -333,7 +538,34 @@ const s = StyleSheet.create({
   startBtnDisabled: { backgroundColor: '#93b9f5' },
   startBtnText:     { color: '#fff', fontSize: 17, fontWeight: '700' },
   // Map
+  mapWrap:          { flex: 1, position: 'relative' },
   map:              { flex: 1 },
+  // 📍 current-location — bottom-right.
+  locateBtn: {
+    position: 'absolute', bottom: 16, right: 16,
+    backgroundColor: '#fff', borderRadius: 24, width: 48, height: 48,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 4, elevation: 5,
+    zIndex: 10,
+  },
+  locateIcon: { fontSize: 22 },
+  // Sim joystick toggle — sits one button above 📍.
+  simToggle: {
+    position: 'absolute', bottom: 76, right: 16,
+    backgroundColor: '#fff', borderRadius: 24, width: 48, height: 48,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 4, elevation: 5,
+    zIndex: 10,
+  },
+  simToggleIcon: { fontSize: 22 },
+  // Joystick container — sits above the sim toggle so it doesn't cover
+  // either button or the HUD below.
+  simJoyWrap: {
+    position: 'absolute', bottom: 140, right: 16,
+    zIndex: 9,
+  },
   // HUD
   hud:              { backgroundColor: '#1a73e8', paddingHorizontal: 20, paddingVertical: 16, minHeight: 80, justifyContent: 'center' },
   hudArrived:       { backgroundColor: '#1D9E75' },

@@ -8,8 +8,8 @@
     "scheme": "frontend",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-
     "android": {
+      "package": "com.tosafeplace.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -22,7 +22,12 @@
         "googleMaps": {
           "apiKey": "AIzaSyCzQ9E3_q6ev4_FrJeEHpfk0MkUPtbizgM"
         }
-      }
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "INTERNET"
+      ]
     },
     "ios": {
       "supportsTablet": true,
@@ -52,6 +57,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "44039d97-303d-49c8-ba97-0a11c66109d9"
+      }
     }
   }
 }

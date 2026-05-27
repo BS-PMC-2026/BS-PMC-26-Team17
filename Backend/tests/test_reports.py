@@ -33,12 +33,23 @@ def make_async_iter(items):
     return AsyncIter(items)
 
 
+def _empty_async_iter():
+    class _AsyncIter:
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            raise StopAsyncIteration
+    return _AsyncIter()
+
+
 def build_db_mock(*, shelter=None, user=None, report_count=0):
     """Build a db mock that returns different collection mocks per name.
 
     - `db["Report"]` supports count_documents and insert_one
     - `db["ShelterTest"]` supports find_one (returns the given shelter)
-    - `db["User"]` supports find_one (returns the given user)
+    - `db["User"]` supports find_one (returns the given user) and find() yields nothing
+    - `db["NotificationLog"]` is a no-op stub so the closed-shelter background
+      task can run without crashing — its DB writes are irrelevant to these tests
     """
     report_coll = MagicMock()
     report_coll.count_documents = AsyncMock(return_value=report_count)
@@ -49,12 +60,19 @@ def build_db_mock(*, shelter=None, user=None, report_count=0):
 
     user_coll = MagicMock()
     user_coll.find_one = AsyncMock(return_value=user)
+    # The notification task iterates over admins with `async for admin in db["User"].find(...)`
+    user_coll.find = MagicMock(return_value=_empty_async_iter())
+
+    notif_coll = MagicMock()
+    notif_coll.find_one = AsyncMock(return_value=None)
+    notif_coll.insert_one = AsyncMock(return_value=MagicMock(inserted_id="x"))
 
     def get_collection(name):
         return {
             "Report": report_coll,
             "ShelterTest": shelter_coll,
             "User": user_coll,
+            "NotificationLog": notif_coll,
         }[name]
 
     db = MagicMock()
@@ -264,6 +282,115 @@ async def test_empty_description_is_allowed(async_client):
     assert response.status_code == 200
     inserted = report_coll.insert_one.call_args.args[0]
     assert inserted["description"] == ""
+
+
+# ── Notification trigger ────────────────────────────────────────────────────
+# These assert the *trigger condition* — that the background task is queued
+# for the right report types and not others. The orchestration of the
+# notification itself (coalescing, admin filtering, push payload, log writes)
+# lives in test_notifications.py.
+
+@pytest.mark.asyncio
+async def test_closed_report_triggers_notification(async_client):
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db), \
+         patch("app.routes.reports._notify_admins_urgent_report") as notify_mock:
+        await async_client.post(
+            "/reports",
+            json=base_body(reportCategory="access", reportType="closed"),
+        )
+
+    notify_mock.assert_called_once()
+    args = notify_mock.call_args.args
+    assert args[0] == SHELTER_ID
+    assert args[1] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_verified_locked_report_triggers_notification(async_client):
+    """Locked reports require verification (the user must be within 50m).
+    A verified one should both save AND trigger the notification."""
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db), \
+         patch("app.routes.reports._notify_admins_urgent_report") as notify_mock:
+        await async_client.post(
+            "/reports",
+            json=base_body(
+                reportCategory="access",
+                reportType="locked",
+                reporterLat=32.0853,
+                reporterLng=34.7818,  # exactly at the shelter → verified
+            ),
+        )
+
+    notify_mock.assert_called_once()
+    args = notify_mock.call_args.args
+    assert args[0] == SHELTER_ID
+    assert args[1] == "locked"
+
+
+@pytest.mark.asyncio
+async def test_unverified_locked_report_rejected_no_notification(async_client):
+    """An unverified locked report is rejected at the gate — no save, no notify."""
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db), \
+         patch("app.routes.reports._notify_admins_urgent_report") as notify_mock:
+        response = await async_client.post(
+            "/reports",
+            json=base_body(
+                reportCategory="access",
+                reportType="locked",
+                reporterLat=32.0900,  # ~520m away
+                reporterLng=34.7818,
+            ),
+        )
+
+    assert response.status_code == 400
+    notify_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_non_urgent_report_does_not_trigger_notification(async_client):
+    """Cleanliness, capacity, damage, etc. shouldn't bother the admins."""
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db), \
+         patch("app.routes.reports._notify_admins_urgent_report") as notify_mock:
+        await async_client.post(
+            "/reports",
+            json=base_body(reportCategory="cleanliness", reportType="dirty"),
+        )
+
+    notify_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_access_category_with_non_urgent_type_does_not_trigger(async_client):
+    """Edge case: same `access` category but a type we don't escalate
+    (e.g. `access_blocked`). No notification should fire."""
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    with patch("app.routes.reports.db", db), \
+         patch("app.routes.reports._notify_admins_urgent_report") as notify_mock:
+        await async_client.post(
+            "/reports",
+            json=base_body(reportCategory="access", reportType="access_blocked"),
+        )
+
+    notify_mock.assert_not_called()
 
 
 # ── GET /reports ────────────────────────────────────────────────────────────

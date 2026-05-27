@@ -12,7 +12,7 @@ import {
   Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, router } from "expo-router";
 import { useAuth } from "@/context/auth";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -585,6 +585,21 @@ export default function ShelterDashboard() {
 
   return (
     <View style={[s.container, { paddingTop: Math.max(0, insets.top - 10) }]}>
+      {/* Header row — Back arrow + title.
+          The sidebar is gone; users land here from Settings → Admin section. */}
+      <View style={s.topHeaderRow}>
+        <TouchableOpacity
+          style={s.backBtn}
+          onPress={() => router.back()}
+          testID="back-button"
+          accessibilityLabel="Back"
+        >
+          <Text style={s.backIcon}>‹</Text>
+        </TouchableOpacity>
+        <Text style={s.topHeaderTitle}>Shelter Dashboard</Text>
+        <View style={{ width: 36 }} />
+      </View>
+
       {/* Status cards */}
       <View style={s.statsRow}>
         {[
@@ -1193,6 +1208,28 @@ const s = StyleSheet.create({
     backgroundColor: "#181818",
     padding: 14,
     paddingTop: 1,
+  },
+  topHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#2a2a2a",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  backIcon: { fontSize: 28, color: "#fff", lineHeight: 30, marginTop: -2 },
+  topHeaderTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#fff",
   },
   statsRow: { flexDirection: "row", gap: 12, marginBottom: 18, marginTop: -8 },
   statCard: {

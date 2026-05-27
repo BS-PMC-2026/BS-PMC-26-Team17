@@ -10,10 +10,13 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  DeviceEventEmitter,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
+import { GEOFENCE_SETTINGS_CHANGED_EVENT } from '@/hooks/use-home-geofence';
 
 // Nominatim suggestion shape (the parts we care about)
 type NominatimResult = {
@@ -49,7 +52,7 @@ function formatSuggestion(r: NominatimResult): string {
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   // Form state
   const [address, setAddress] = useState('');
@@ -216,6 +219,10 @@ export default function SettingsScreen() {
         }).catch(() => console.log('Network error, saved locally.'));
       }
 
+      // Tell the geofence hook to re-evaluate now that home/radius may
+      // have changed — otherwise it would wait for the next GPS movement.
+      DeviceEventEmitter.emit(GEOFENCE_SETTINGS_CHANGED_EVENT);
+
       Alert.alert('Saved', 'Your preferences have been saved.');
     } catch {
       Alert.alert('Error', 'Failed to save settings.');
@@ -245,7 +252,20 @@ export default function SettingsScreen() {
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={{ paddingBottom: 40 }}
     >
-      <Text style={styles.header}>Emergency Settings</Text>
+      {/* Custom header row — Back arrow + title.
+          The sidebar was removed, so screens navigate via push/back instead. */}
+      <View style={styles.headerRow}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => router.back()}
+          testID="back-button"
+          accessibilityLabel="Back"
+        >
+          <Text style={styles.backIcon}>‹</Text>
+        </TouchableOpacity>
+        <Text style={styles.header}>Emergency Settings</Text>
+        <View style={{ width: 36 }} />
+      </View>
 
       {!homeIsConfigured && (
         <View style={styles.warningBanner}>
@@ -349,13 +369,62 @@ export default function SettingsScreen() {
       <TouchableOpacity style={styles.saveButton} onPress={saveSettings}>
         <Text style={styles.saveButtonText}>Save Preferences</Text>
       </TouchableOpacity>
+
+      {/* Admin-only section. Without the sidebar there's no other entry
+          point to the dashboard, so we expose it here. */}
+      {user?.role === 'admin' && (
+        <View style={styles.adminSection}>
+          <Text style={styles.adminSectionTitle}>Admin</Text>
+          <TouchableOpacity
+            style={styles.adminBtn}
+            onPress={() => router.push('/(tabs)/ShelterDashboard' as any)}
+            testID="shelter-dashboard-button"
+          >
+            <Text style={styles.adminBtnText}>📋 Shelter Dashboard</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Logout — moved here from the old Home placeholder so users can
+          sign out from the centralized Settings entry point. */}
+      {user?.role === 'admin' && (
+        <TouchableOpacity
+          style={styles.adminButton}
+          onPress={() => router.push('/admin-broadcast' as any)}
+          testID="admin-broadcast-button"
+        >
+          <Text style={styles.adminButtonText}>📣 Send message to all users</Text>
+        </TouchableOpacity>
+      )}
+
+      <TouchableOpacity
+        style={styles.logoutButton}
+        onPress={() => logout()}
+        testID="logout-button"
+      >
+        <Text style={styles.logoutButtonText}>🚪 Logout</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#181818', padding: 20 },
-  header: { fontSize: 24, fontWeight: 'bold', marginBottom: 18, color: '#333' },
+  header: { fontSize: 24, fontWeight: 'bold', color: '#333', flex: 1, textAlign: 'center' },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f2f2f2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backIcon: { fontSize: 28, color: '#1a73e8', lineHeight: 30, marginTop: -2 },
 
   warningBanner: {
     backgroundColor: '#FFF4E5',
@@ -426,4 +495,47 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   saveButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+
+  logoutButton: {
+    backgroundColor: '#e24b4a',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 30,
+  },
+  logoutButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+
+  adminButton: {
+    backgroundColor: '#0a7ea4',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  adminButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  adminSection: {
+    marginTop: 24,
+    paddingTop: 18,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#ddd',
+  },
+  adminSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 10,
+  },
+  adminBtn: {
+    backgroundColor: '#fff',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#1a73e8',
+  },
+  adminBtnText: { color: '#1a73e8', fontSize: 16, fontWeight: '700' },
 });

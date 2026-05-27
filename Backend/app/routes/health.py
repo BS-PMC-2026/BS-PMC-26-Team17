@@ -10,4 +10,6 @@ def health_check():
 
 @router.get("/ping")
 def ping():
-    return {"message": "pong 🏓", "app": "ToSafePlace"}
+    return {"message": "pong 🏓"}
+
+

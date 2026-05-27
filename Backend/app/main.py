@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import health, auth, shelters, reports, admin
+from app.routes import health, auth, shelters, reports, admin, settings
+from app.routes.MessageAll import geofence, broadcast
 from app.core.database import client
 
 
@@ -29,6 +30,9 @@ app.include_router(auth.router)
 app.include_router(shelters.router)
 app.include_router(reports.router)
 app.include_router(admin.router)
+app.include_router(geofence.router)
+app.include_router(broadcast.router)
+app.include_router(settings.router)
 
 
 @app.on_event("startup")
