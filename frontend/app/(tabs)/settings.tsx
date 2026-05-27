@@ -387,6 +387,16 @@ export default function SettingsScreen() {
 
       {/* Logout — moved here from the old Home placeholder so users can
           sign out from the centralized Settings entry point. */}
+      {user?.role === 'admin' && (
+        <TouchableOpacity
+          style={styles.adminButton}
+          onPress={() => router.push('/admin-broadcast' as any)}
+          testID="admin-broadcast-button"
+        >
+          <Text style={styles.adminButtonText}>📣 Send message to all users</Text>
+        </TouchableOpacity>
+      )}
+
       <TouchableOpacity
         style={styles.logoutButton}
         onPress={() => logout()}
@@ -495,6 +505,15 @@ const styles = StyleSheet.create({
     marginBottom: 30,
   },
   logoutButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+
+  adminButton: {
+    backgroundColor: '#0a7ea4',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  adminButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
   adminSection: {
     marginTop: 24,

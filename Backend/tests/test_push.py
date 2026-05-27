@@ -1,4 +1,4 @@
-"""Unit tests for the Expo Push API client (app/core/push.py).
+"""Unit tests for the Expo Push API client (app/routes/MessageAll/push.py).
 
 Mocks httpx so no real network traffic; verifies the contract we send to
 Expo's servers and how we react to various response shapes.
@@ -20,7 +20,7 @@ def _make_response(status_code: int, text: str = ""):
 @pytest.mark.asyncio
 async def test_send_expo_push_returns_false_for_empty_tokens():
     """No tokens → no network call, returns False."""
-    with patch("app.core.push.httpx.AsyncClient") as client_mock:
+    with patch("app.routes.MessageAll.push.httpx.AsyncClient") as client_mock:
         ok = await send_expo_push([], "title", "body")
     assert ok is False
     # Should never have attempted to open an HTTP client
@@ -31,7 +31,7 @@ async def test_send_expo_push_returns_false_for_empty_tokens():
 async def test_send_expo_push_filters_invalid_tokens():
     """Tokens that don't start with `ExponentPushToken[` are silently dropped.
     If all are invalid, no request is made."""
-    with patch("app.core.push.httpx.AsyncClient") as client_mock:
+    with patch("app.routes.MessageAll.push.httpx.AsyncClient") as client_mock:
         ok = await send_expo_push(["not-a-token", "", "fake"], "t", "b")
     assert ok is False
     client_mock.assert_not_called()
@@ -43,7 +43,7 @@ async def test_send_expo_push_returns_true_on_200():
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=MagicMock(post=AsyncMock(return_value=_make_response(200, '{"data":"ok"}'))))
     ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch("app.core.push.httpx.AsyncClient", return_value=ctx):
+    with patch("app.routes.MessageAll.push.httpx.AsyncClient", return_value=ctx):
         ok = await send_expo_push([valid_token], "Title", "Body", {"foo": "bar"})
 
     assert ok is True
@@ -55,7 +55,7 @@ async def test_send_expo_push_returns_false_on_non_200():
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=MagicMock(post=AsyncMock(return_value=_make_response(500, "Server error"))))
     ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch("app.core.push.httpx.AsyncClient", return_value=ctx):
+    with patch("app.routes.MessageAll.push.httpx.AsyncClient", return_value=ctx):
         ok = await send_expo_push([valid_token], "Title", "Body")
 
     assert ok is False
@@ -68,7 +68,7 @@ async def test_send_expo_push_returns_false_on_exception():
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(side_effect=Exception("connection refused"))
     ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch("app.core.push.httpx.AsyncClient", return_value=ctx):
+    with patch("app.routes.MessageAll.push.httpx.AsyncClient", return_value=ctx):
         ok = await send_expo_push([valid_token], "Title", "Body")
 
     assert ok is False
@@ -84,7 +84,7 @@ async def test_send_expo_push_builds_correct_payload():
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=client)
     ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch("app.core.push.httpx.AsyncClient", return_value=ctx):
+    with patch("app.routes.MessageAll.push.httpx.AsyncClient", return_value=ctx):
         await send_expo_push(tokens, "T", "B", {"shelterId": "X"})
 
     post_mock.assert_awaited_once()
