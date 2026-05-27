@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.push import send_expo_push, EXPO_PUSH_URL
+from app.routes.MessageAll.push import send_expo_push, EXPO_PUSH_URL
 
 
 def _make_response(status_code: int, text: str = ""):

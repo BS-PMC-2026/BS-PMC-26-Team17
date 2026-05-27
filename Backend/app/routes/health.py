@@ -8,6 +8,3 @@ def health_check():
     return {"status": "ok", "service": "ToSafePlace API"}
 
 
-@router.get("/ping")
-def ping():
-    return {"message": "pong 🏓", "app": "ToSafePlace"}

@@ -10,11 +10,13 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  DeviceEventEmitter,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
+import { GEOFENCE_SETTINGS_CHANGED_EVENT } from '@/hooks/use-home-geofence';
 
 // Nominatim suggestion shape (the parts we care about)
 type NominatimResult = {
@@ -216,6 +218,10 @@ export default function SettingsScreen() {
           }),
         }).catch(() => console.log('Network error, saved locally.'));
       }
+
+      // Tell the geofence hook to re-evaluate now that home/radius may
+      // have changed — otherwise it would wait for the next GPS movement.
+      DeviceEventEmitter.emit(GEOFENCE_SETTINGS_CHANGED_EVENT);
 
       Alert.alert('Saved', 'Your preferences have been saved.');
     } catch {
