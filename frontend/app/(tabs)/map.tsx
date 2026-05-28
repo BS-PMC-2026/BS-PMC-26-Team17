@@ -273,35 +273,49 @@ export default function MapScreen() {
   //      when polygons are not yet loaded or the user is just outside any
   //      polygon (e.g. on a road boundary).
   //   3. Plain "באר שבע" as a last-resort string.
+  //
+  // While the sim is on, we follow the simulated dot — that's what the
+  // user actually sees on the map, and what should drive any zone-based
+  // alerting in demos. The real GPS resumes when sim is off.
   const userZone = useMemo(() => {
-    if (!userLocation) return 'באר שבע';
+    const pos = simOn ? simCoords : userLocation;
+    if (!pos) return 'באר שבע';
     if (polygonsReady) {
-      const zone = OrefZonesService.getZone(
-        userLocation.latitude,
-        userLocation.longitude,
-      );
+      const zone = OrefZonesService.getZone(pos.latitude, pos.longitude);
       if (zone) return zone;
     }
     let best: string | undefined;
     let bestDist = Infinity;
     for (const sh of shelterPins) {
       if (!sh.area) continue;
-      const dLat = sh.latitude  - userLocation.latitude;
-      const dLng = sh.longitude - userLocation.longitude;
+      const dLat = sh.latitude  - pos.latitude;
+      const dLng = sh.longitude - pos.longitude;
       const d = dLat * dLat + dLng * dLng;
       if (d < bestDist) { bestDist = d; best = sh.area; }
     }
     return best ?? 'באר שבע';
-  }, [userLocation, shelterPins, polygonsReady]);
+  }, [simOn, simCoords, userLocation, shelterPins, polygonsReady]);
+
 
   // Helper — send a JSON message into the WebView
   const sendToWeb = useCallback((obj: any) => {
     webRef.current?.postMessage(JSON.stringify(obj));
   }, []);
 
+  // Append the sim coords as `fromLat`/`fromLng` so the downstream screens
+  // (shelter-details → navigate) know to start the route from the simulated
+  // position instead of real GPS. Empty string when sim is off.
+  const fromSuffix = (): string => {
+    if (!simOn || !simCoords) return '';
+    return `&fromLat=${simCoords.latitude}&fromLng=${simCoords.longitude}`;
+  };
+
   const openShelter = useCallback((sh: ShelterPin) => {
-    router.push(`/shelter-details?${shelterParams(sh)}` as any);
-  }, []);
+    const suffix = (!simOn || !simCoords)
+      ? ''
+      : `&fromLat=${simCoords.latitude}&fromLng=${simCoords.longitude}`;
+    router.push(`/shelter-details?${shelterParams(sh)}${suffix}` as any);
+  }, [simOn, simCoords]);
 
   // Load shelters from the API
   useEffect(() => {
@@ -601,7 +615,7 @@ export default function MapScreen() {
   const navigateToPin = () => {
     if (!pin) return;
     router.push(
-      `/navigate?lat=${pin.latitude}&lng=${pin.longitude}&name=${encodeURIComponent(pin.name)}`,
+      `/navigate?lat=${pin.latitude}&lng=${pin.longitude}&name=${encodeURIComponent(pin.name)}${fromSuffix()}`,
     );
   };
 

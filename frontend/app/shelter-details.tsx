@@ -35,6 +35,9 @@ export default function ShelterDetailsScreen() {
     hasStairs?: string; petIssueReported?: string;
     cleanlinessStatus?: string; shouldBeOpen?: string;
     lastReportAt?: string; lastReportType?: string;
+    // Carried through from map.tsx when the SimJoystick is active so the
+    // navigation route is computed from the simulated dot, not real GPS.
+    fromLat?: string; fromLng?: string;
   }>();
 
   const lat = parseFloat(p.lat || '0');
@@ -47,8 +50,12 @@ export default function ShelterDetailsScreen() {
   const shouldBeOpen     = p.shouldBeOpen === 'true';
 
   const navigate = () => {
+    // Forward the sim "from" point if it was carried in by map.tsx — keeps
+    // the simulated joystick position as the start of the route.
+    const fromSuffix =
+      p.fromLat && p.fromLng ? `&fromLat=${p.fromLat}&fromLng=${p.fromLng}` : '';
     router.push(
-      `/navigate?lat=${lat}&lng=${lng}&name=${encodeURIComponent(p.name || 'Shelter')}`,
+      `/navigate?lat=${lat}&lng=${lng}&name=${encodeURIComponent(p.name || 'Shelter')}${fromSuffix}`,
     );
   };
 

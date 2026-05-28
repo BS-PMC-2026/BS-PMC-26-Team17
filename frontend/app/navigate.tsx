@@ -120,13 +120,24 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function NavigateScreen() {
-  const { lat, lng, name, emergency } =
-    useLocalSearchParams<{ lat: string; lng: string; name: string; emergency?: string }>();
+  const { lat, lng, name, emergency, fromLat, fromLng } =
+    useLocalSearchParams<{
+      lat: string; lng: string; name: string; emergency?: string;
+      // When the SimJoystick on the map was active, these carry the fake
+      // start position so navigation begins from the simulated dot instead
+      // of waiting for real GPS.
+      fromLat?: string; fromLng?: string;
+    }>();
 
   const destLat = parseFloat(lat || '0');
   const destLng = parseFloat(lng || '0');
   const dest: Coord = { latitude: destLat, longitude: destLng };
   const isEmergency = emergency === 'true';
+  // Pre-computed "from" override from the URL — null when not provided.
+  const fromOverride: Coord | null =
+    fromLat && fromLng
+      ? { latitude: parseFloat(fromLat), longitude: parseFloat(fromLng) }
+      : null;
 
   const webRef         = useRef<WebView>(null);
   const watchRef       = useRef<Location.LocationSubscription | null>(null);
@@ -139,7 +150,9 @@ export default function NavigateScreen() {
     isEmergency ? 'navigating' : 'select'
   );
   const [mode, setMode]                 = useState<Mode>('foot');
-  const [userLocation, setUserLocation] = useState<Coord | null>(null);
+  // Seed userLocation immediately from the override so the background route
+  // fetch (3 modes in parallel) starts right away instead of waiting on GPS.
+  const [userLocation, setUserLocation] = useState<Coord | null>(fromOverride);
   const [steps, setSteps]               = useState<any[]>([]);
   const [currentStep, setCurrentStep]   = useState(0);
   const [eta, setEta]                   = useState('');
@@ -150,8 +163,10 @@ export default function NavigateScreen() {
   const [webReady, setWebReady]         = useState(false);
   // Sim joystick — manual QA tool that fakes GPS without leaving the office.
   // While `simOn`, the real GPS watch pauses and `simCoords` drives the map.
-  const [simOn, setSimOn]               = useState(false);
-  const [simCoords, setSimCoords]       = useState<Coord | null>(null);
+  // If a `from` override was provided, start with the sim already on so
+  // route fetches use it (instead of racing against real GPS).
+  const [simOn, setSimOn]               = useState<boolean>(!!fromOverride);
+  const [simCoords, setSimCoords]       = useState<Coord | null>(fromOverride);
 
   // Helper — send a JSON message into the WebView
   const sendToWeb = useCallback((obj: any) => {
@@ -169,6 +184,10 @@ export default function NavigateScreen() {
 
   // ─── Initial location ─────────────────────────────────────────────────────────
   useEffect(() => {
+    // If the caller seeded us with a fake "from" point (sim joystick on the
+    // map screen), skip the GPS lookup entirely — otherwise the real GPS
+    // reading would overwrite the sim start.
+    if (fromOverride) return;
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') { setError('Location permission needed'); return; }
