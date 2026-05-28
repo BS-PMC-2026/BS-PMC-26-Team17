@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   TextInput,
+  DeviceEventEmitter,
 } from "react-native";
 import { WebView } from "react-native-webview";
 import * as Location from "expo-location";
@@ -20,6 +21,7 @@ import SimJoystick from "@/components/SimJoystick";
 import AlertBanner from "@/components/AlertBanner";
 import AlertInjectModal from "@/components/AlertInjectModal";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
+import { GEOFENCE_SETTINGS_CHANGED_EVENT } from "@/hooks/use-home-geofence";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -642,6 +644,9 @@ export default function MapScreen() {
               };
               await AsyncStorage.setItem("userSettings", JSON.stringify(next));
 
+              // Re-arm the geofence with the new home immediately.
+              DeviceEventEmitter.emit(GEOFENCE_SETTINGS_CHANGED_EVENT);
+
               // Sync to backend (best-effort — local copy is the source of truth here)
               if (API_URL && user?.id) {
                 fetch(`${API_URL}/api/settings`, {
@@ -765,6 +770,16 @@ export default function MapScreen() {
         accessibilityLabel="Simulate an alert"
       >
         <Text style={styles.demoAlertIcon}>🚨</Text>
+      </TouchableOpacity>
+
+      {/* 💬 chat shortcut — opens the psychology assistant chatbot. */}
+      <TouchableOpacity
+        style={styles.chatFab}
+        onPress={() => router.push('/chat' as any)}
+        testID="chat-fab"
+        accessibilityLabel="Open chat assistant"
+      >
+        <Text style={styles.chatFabIcon}>💬</Text>
       </TouchableOpacity>
 
       {/* Location button */}
@@ -919,6 +934,25 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   demoAlertIcon: { fontSize: 20 },
+  // 💬 chat shortcut — stacked under the 🚨 alert demo button.
+  chatFab: {
+    position: 'absolute',
+    top: 216,
+    left: 12,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 10,
+  },
+  chatFabIcon: { fontSize: 20 },
 
   locationButton: {
     position: "absolute",

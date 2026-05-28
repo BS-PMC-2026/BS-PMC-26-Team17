@@ -1,5 +1,6 @@
 # Environment variables - never push this!
 .env
+Backend/.env
 
 # Python
 __pycache__/

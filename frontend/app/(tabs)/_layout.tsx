@@ -2,6 +2,8 @@ import { Stack, Redirect } from "expo-router";
 import React from "react";
 
 import { useAuth } from "@/context/auth";
+import { useHomeGeofence } from "@/hooks/use-home-geofence";
+import { useBroadcastPoller } from "@/hooks/use-broadcast-poller";
 
 /**
  * Stack-based layout. The Drawer / sidebar was intentionally removed —
@@ -11,6 +13,8 @@ import { useAuth } from "@/context/auth";
  */
 export default function AppLayout() {
   const { isLoggedIn } = useAuth();
+  useHomeGeofence();
+  useBroadcastPoller();
 
   if (!isLoggedIn) return <Redirect href="/login" />;
 

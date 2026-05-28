@@ -10,11 +10,13 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  DeviceEventEmitter,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
+import { GEOFENCE_SETTINGS_CHANGED_EVENT } from '@/hooks/use-home-geofence';
 
 // Nominatim suggestion shape (the parts we care about)
 type NominatimResult = {
@@ -217,6 +219,10 @@ export default function SettingsScreen() {
         }).catch(() => console.log('Network error, saved locally.'));
       }
 
+      // Tell the geofence hook to re-evaluate now that home/radius may
+      // have changed — otherwise it would wait for the next GPS movement.
+      DeviceEventEmitter.emit(GEOFENCE_SETTINGS_CHANGED_EVENT);
+
       Alert.alert('Saved', 'Your preferences have been saved.');
     } catch {
       Alert.alert('Error', 'Failed to save settings.');
@@ -381,6 +387,16 @@ export default function SettingsScreen() {
 
       {/* Logout — moved here from the old Home placeholder so users can
           sign out from the centralized Settings entry point. */}
+      {user?.role === 'admin' && (
+        <TouchableOpacity
+          style={styles.adminButton}
+          onPress={() => router.push('/admin-broadcast' as any)}
+          testID="admin-broadcast-button"
+        >
+          <Text style={styles.adminButtonText}>📣 Send message to all users</Text>
+        </TouchableOpacity>
+      )}
+
       <TouchableOpacity
         style={styles.logoutButton}
         onPress={() => logout()}
@@ -489,6 +505,15 @@ const styles = StyleSheet.create({
     marginBottom: 30,
   },
   logoutButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+
+  adminButton: {
+    backgroundColor: '#0a7ea4',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  adminButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
   adminSection: {
     marginTop: 24,
