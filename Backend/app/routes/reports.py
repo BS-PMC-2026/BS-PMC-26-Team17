@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel
 from bson import ObjectId
 from app.core.database import db
-from app.core.push import send_expo_push
+from app.routes.MessageAll.push import send_expo_push
 from app.models import ReportCreate
 
 router = APIRouter(prefix="/reports", tags=["reports"])
