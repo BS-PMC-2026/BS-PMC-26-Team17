@@ -94,7 +94,12 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
     }
 
     else if (msg.type === 'flyTo') {
-      map.setView([msg.lat, msg.lng], msg.zoom || 16, { animate: true, duration: 0.4 });
+      // Honor msg.duration so the sim can request shorter animations that
+      // don't pile up between rapid GPS ticks (default = 0.4s).
+      map.setView([msg.lat, msg.lng], msg.zoom || 16, {
+        animate: true,
+        duration: typeof msg.duration === 'number' ? msg.duration : 0.4,
+      });
     }
 
     else if (msg.type === 'fitBounds') {
@@ -281,7 +286,9 @@ export default function NavigateScreen() {
   useEffect(() => {
     if (!simOn || !simCoords) return;
     sendToWeb({ type: 'setUserLocation', lat: simCoords.latitude, lng: simCoords.longitude });
-    sendToWeb({ type: 'flyTo', lat: simCoords.latitude, lng: simCoords.longitude, zoom: 17 });
+    // Animation must fit inside the 400ms sim tick — otherwise overlapping
+    // flyTo animations stack and the camera jumps backwards.
+    sendToWeb({ type: 'flyTo', lat: simCoords.latitude, lng: simCoords.longitude, zoom: 17, duration: 0.3 });
     advanceOnRoute(simCoords);
     // We intentionally omit `advanceOnRoute` from deps — it's a stable inline
     // function defined below that closes over refs, not state.
@@ -313,18 +320,53 @@ export default function NavigateScreen() {
     sendToWeb({ type: 'flyTo', lat: seed.latitude, lng: seed.longitude, zoom: 17 });
   };
 
-  // Each joystick tick nudges the sim a tiny step in the pushed direction.
-  // STEP is the distance per fully-pushed knob per render (~11 m in lat).
+  // Throttled joystick → GPS-style location updates.
+  // The joystick fires up to ~60×/sec; storing the direction in a ref keeps
+  // the reactive surface small (no re-renders per touch event). A separate
+  // interval reads the latest intent and produces ~2.5 location updates/sec,
+  // close to what real GPS emits while walking.
+  //
+  // We don't rely on `onPanResponderRelease` to stop movement — on iOS that
+  // event can be missed if the user lifts a finger outside the joystick pad.
+  // Instead we use a "deadman switch": if `handleJoyMove` hasn't fired in
+  // the last 250ms, assume the user released and stop stepping.
+  const moveIntent = useRef({ dx: 0, dy: 0 });
+  const lastMoveAt = useRef(0);
+
   const handleJoyMove = (dx: number, dy: number) => {
-    const STEP = 0.0001;
-    setSimCoords(prev => {
-      const base = prev ?? userLocation ?? dest;
-      return {
-        latitude:  base.latitude  - dy * STEP, // up on screen = north
-        longitude: base.longitude + dx * STEP,
-      };
-    });
+    lastMoveAt.current = Date.now();
+    moveIntent.current = { dx, dy };
   };
+
+  const handleJoyStop = () => {
+    moveIntent.current = { dx: 0, dy: 0 };
+  };
+
+  useEffect(() => {
+    if (!simOn) return;
+    const SIM_TICK_MS    = 400;      // ≈ 2.5 GPS-style updates per second
+    const STEP           = 0.00006;  // ≈ 6m per fully-pushed tick (walking pace)
+    const STALE_MOVE_MS  = 250;      // if onMove hasn't fired in this window → "released"
+    const id = setInterval(() => {
+      // Deadman switch — joystick events stop coming when the finger lifts,
+      // so we infer release from staleness rather than trust onPanResponderRelease.
+      if (Date.now() - lastMoveAt.current > STALE_MOVE_MS) {
+        moveIntent.current = { dx: 0, dy: 0 };
+        return;
+      }
+      const { dx, dy } = moveIntent.current;
+      if (dx === 0 && dy === 0) return; // joystick at rest → no movement
+      setSimCoords(prev => {
+        const base = prev ?? userLocation ?? dest;
+        return {
+          latitude:  base.latitude  - dy * STEP, // up on screen = north
+          longitude: base.longitude + dx * STEP,
+        };
+      });
+    }, SIM_TICK_MS);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simOn]);
 
   // ─── Update step / remaining polyline / ETA on every GPS tick ───────────
   function advanceOnRoute(pos: Coord) {
@@ -341,12 +383,22 @@ export default function NavigateScreen() {
         NavigationService.calculateETA(distanceM, modeRef.current)
       ));
 
-      // Off-route → recalculate route from the new position
+      // Off-route → fetch a fresh route from the current position and
+      // actually APPLY it (not just refresh the background cache). This is
+      // the same flow as the initial Start tap, so it works identically for
+      // real GPS and the SimJoystick — the polyline + steps + ETA all
+      // update to reflect the new path from where the user actually is.
       if (!recalcCooldown.current &&
           NavigationService.isOffRoute(pos, polylineRef.current)) {
         recalcCooldown.current = true;
-        setUserLocation({ ...pos });
-        setTimeout(() => { recalcCooldown.current = false; }, 8000);
+        NavigationService.fetchRoute(pos, dest, modeRef.current)
+          .then(applyRoute)
+          .catch(e => console.warn('[Nav] off-route recalc failed:', e))
+          .finally(() => {
+            // Brief cooldown — long enough to avoid hammering OSRM each tick,
+            // short enough to react quickly if the user keeps straying.
+            setTimeout(() => { recalcCooldown.current = false; }, 3000);
+          });
       }
     }
   }
@@ -479,7 +531,7 @@ export default function NavigateScreen() {
               corner without obscuring the route line. */}
           {simOn && (
             <View style={s.simJoyWrap} pointerEvents="box-none">
-              <SimJoystick onMove={handleJoyMove} />
+              <SimJoystick onMove={handleJoyMove} onStop={handleJoyStop} />
             </View>
           )}
         </View>
@@ -560,10 +612,15 @@ const s = StyleSheet.create({
     zIndex: 10,
   },
   simToggleIcon: { fontSize: 22 },
-  // Joystick container — sits above the sim toggle so it doesn't cover
-  // either button or the HUD below.
+  // Joystick container — bottom-center so the user can drive with one
+  // thumb in the middle of the screen without the corner buttons being
+  // hidden by their hand.
   simJoyWrap: {
-    position: 'absolute', bottom: 140, right: 16,
+    position: 'absolute',
+    bottom: 140,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
     zIndex: 9,
   },
   // HUD

@@ -16,6 +16,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/auth";
 import { AlertsService, type Alert as PikudAlert } from "@/services/AlertsService";
 import { OrefZonesService } from "@/services/OrefZonesService";
+import SimJoystick from "@/components/SimJoystick";
 import AlertBanner from "@/components/AlertBanner";
 import AlertInjectModal from "@/components/AlertInjectModal";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
@@ -183,7 +184,11 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
     }
 
     else if (msg.type === 'flyTo') {
-      map.setView([msg.lat, msg.lng], msg.zoom || 16, { animate: true, duration: 0.5 });
+      // Honor msg.duration — sim updates pass 0 for instant pan so rapid
+      // ticks don't stack overlapping animations and feel laggy.
+      var dur = typeof msg.duration === 'number' ? msg.duration : 0.5;
+      map.setView([msg.lat, msg.lng], msg.zoom || 16,
+        dur === 0 ? { animate: false } : { animate: true, duration: dur });
     }
 
     else if (msg.type === 'setSearchPin') {
@@ -242,6 +247,12 @@ export default function MapScreen() {
   // Tracks whether the official Pikud HaOref polygons finished loading.
   // We use this to re-evaluate `userZone` once the data is available.
   const [polygonsReady, setPolygonsReady] = useState(false);
+
+  // ─── SimJoystick state — fake GPS for demos / QA ─────────────────────────
+  const [simOn, setSimOn]         = useState(false);
+  const [simCoords, setSimCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const moveIntent = useRef({ dx: 0, dy: 0 });
+  const lastMoveAt = useRef(0);
 
   // Subscribe to alerts (polling oref.org.il every 3s) for the lifetime of
   // the map screen. The same hook also receives manual injections fired by
@@ -468,13 +479,74 @@ export default function MapScreen() {
     }
   }, [shelterPins, openShelter]);
 
-  // 📍 button — fly the map to the user
+  // ─── SimJoystick — fake GPS movement for demos / QA ─────────────────────
+  // Same pattern as navigate.tsx but with a bigger STEP so it's noticeably
+  // faster on the main map (good for "fly across the city" exploration).
+  // The deadman switch (`lastMoveAt`) guards against iOS missing the
+  // PanResponder release event.
+  const handleJoyMove = (dx: number, dy: number) => {
+    lastMoveAt.current = Date.now();
+    moveIntent.current = { dx, dy };
+  };
+  const handleJoyStop = () => {
+    moveIntent.current = { dx: 0, dy: 0 };
+  };
+
+  useEffect(() => {
+    if (!simOn) return;
+    const SIM_TICK_MS   = 100;       // 10 updates/sec
+    const STEP          = 0.0001;    // ≈11m per fully-pushed tick — fast
+    const STALE_MOVE_MS = 250;
+    const id = setInterval(() => {
+      if (Date.now() - lastMoveAt.current > STALE_MOVE_MS) {
+        moveIntent.current = { dx: 0, dy: 0 };
+        return;
+      }
+      const { dx, dy } = moveIntent.current;
+      if (dx === 0 && dy === 0) return;
+      setSimCoords(prev => {
+        const base = prev ?? userLocation ?? { latitude: 31.25, longitude: 34.79 };
+        return {
+          latitude:  base.latitude  - dy * STEP, // up on screen = north
+          longitude: base.longitude + dx * STEP,
+        };
+      });
+    }, SIM_TICK_MS);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simOn]);
+
+  // Push sim location to the map. duration: 0 → instant pan, no animation
+  // overlap between the 100ms ticks.
+  useEffect(() => {
+    if (!simOn || !simCoords || !webReady) return;
+    sendToWeb({ type: 'setUserLocation', lat: simCoords.latitude, lng: simCoords.longitude });
+    sendToWeb({ type: 'flyTo', lat: simCoords.latitude, lng: simCoords.longitude, zoom: 16, duration: 0 });
+  }, [simOn, simCoords, webReady, sendToWeb]);
+
+  const toggleSim = () => {
+    if (simOn) {
+      setSimOn(false);
+      setSimCoords(null);
+      moveIntent.current = { dx: 0, dy: 0 };
+      return;
+    }
+    const seed = userLocation ?? { latitude: 31.25, longitude: 34.79 };
+    setSimCoords(seed);
+    setSimOn(true);
+    if (webReady) {
+      sendToWeb({ type: 'flyTo', lat: seed.latitude, lng: seed.longitude, zoom: 17 });
+    }
+  };
+
+  // 📍 button — fly the map to the user (real or simulated)
   const focusOnUser = () => {
-    if (!userLocation) return;
+    const target = simOn ? simCoords : userLocation;
+    if (!target) return;
     sendToWeb({
       type: 'flyTo',
-      lat: userLocation.latitude,
-      lng: userLocation.longitude,
+      lat: target.latitude,
+      lng: target.longitude,
       zoom: 16,
     });
   };
@@ -694,6 +766,25 @@ export default function MapScreen() {
         </TouchableOpacity>
       )}
 
+      {/* Sim joystick toggle — bottom-right, just above 📍.
+          Hidden by default; tap 👁️ to reveal the joystick for fake GPS. */}
+      <TouchableOpacity
+        style={styles.simToggle}
+        onPress={toggleSim}
+        testID="sim-toggle"
+        accessibilityLabel="Toggle sim joystick"
+      >
+        <Text style={styles.simToggleIcon}>{simOn ? '🎮' : '👁️'}</Text>
+      </TouchableOpacity>
+
+      {/* Joystick itself — only mounted when the sim is on, sits above
+          the toggle so the user can keep their thumb in the corner. */}
+      {simOn && (
+        <View style={styles.simJoyWrap} pointerEvents="box-none">
+          <SimJoystick onMove={handleJoyMove} onStop={handleJoyStop} />
+        </View>
+      )}
+
       {/* Bottom panel for arbitrary map tap (non-shelter point) */}
       {pin && (
         <View style={styles.panel}>
@@ -835,6 +926,28 @@ const styles = StyleSheet.create({
     bottom: 190,
   },
   locationIcon: { fontSize: 22 },
+
+  // Sim joystick toggle — sits one button above 📍.
+  simToggle: {
+    position: 'absolute', bottom: 100, right: 16,
+    backgroundColor: '#fff', borderRadius: 24, width: 48, height: 48,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 4, elevation: 5,
+    zIndex: 10,
+  },
+  simToggleIcon: { fontSize: 22 },
+  // Joystick container — bottom-center so the user can drive with one
+  // thumb in the middle of the screen without the corner buttons being
+  // hidden by their hand.
+  simJoyWrap: {
+    position: 'absolute',
+    bottom: 100,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 9,
+  },
 
   panel: {
     position: "absolute",
