@@ -624,6 +624,15 @@ export default function MapScreen() {
         <Text style={styles.gearIcon}>⚙️</Text>
       </TouchableOpacity>
 
+      <TouchableOpacity
+        style={styles.chatFab}
+        onPress={() => router.push('/chat' as any)}
+        testID="chat-fab"
+        accessibilityLabel="Open chat assistant"
+      >
+        <Text style={styles.chatFabIcon}>💬</Text>
+      </TouchableOpacity>
+
       {/* Location button */}
       {locationGranted && (
         <TouchableOpacity
@@ -729,6 +738,26 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   gearIcon: { fontSize: 20 },
+
+  // 💬 chat shortcut — stacked under the ⚙️ button on the left.
+  chatFab: {
+    position: 'absolute',
+    top: 166,
+    left: 12,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 10,
+  },
+  chatFabIcon: { fontSize: 20 },
 
   locationButton: {
     position: "absolute",
