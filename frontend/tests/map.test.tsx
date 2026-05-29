@@ -35,6 +35,15 @@ jest.mock('@/context/auth', () => ({
   useAuth: () => ({ user: null }),
 }));
 
+// AlertsService polls oref.org.il every 3s — stub it so tests don't trigger
+// real network calls (and don't inflate `fetch.mock.calls.length`).
+jest.mock('@/services/AlertsService', () => ({
+  AlertsService: {
+    subscribe: jest.fn(() => () => {}),
+    injectFakeAlert: jest.fn(),
+  },
+}));
+
 // `postMessage` tracker — every message the screen sends into the WebView
 const mockPostMessage = jest.fn();
 
