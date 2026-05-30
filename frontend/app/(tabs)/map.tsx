@@ -21,7 +21,10 @@ import SimJoystick from "@/components/SimJoystick";
 import AlertBanner from "@/components/AlertBanner";
 import AlertInjectModal from "@/components/AlertInjectModal";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
-import { GEOFENCE_SETTINGS_CHANGED_EVENT } from "@/hooks/use-home-geofence";
+import {
+  GEOFENCE_SETTINGS_CHANGED_EVENT,
+  ACCESSIBILITY_SETTINGS_CHANGED_EVENT,
+} from "@/hooks/use-home-geofence";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -79,6 +82,14 @@ function shelterParams(s: ShelterPin): string {
   add('lastReportAt', s.lastReportAt);
   add('lastReportType', s.lastReportType);
   return parts.join('&');
+}
+
+// Mobility-impaired users opt into "accessible only" mode. A shelter is
+// considered accessible when it's marked accessible AND has no stairs.
+// Undefined fields are treated as "not accessible" (conservative — we'd
+// rather over-dim than mislead someone with limited mobility).
+export function isShelterAccessible(s: ShelterPin): boolean {
+  return s.isAccessible === true && s.hasStairs !== true;
 }
 
 export function getShelterColor(shelter: ShelterPin): string {
@@ -157,8 +168,12 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
       for (var i = 0; i < msg.data.length; i++) {
         var s = msg.data[i];
         var color = s.color || '#BA7517';
+        // Soft accessibility filter — dimmed markers stay visible & clickable
+        // (so they remain a fallback in an emergency) but their reduced
+        // opacity makes the user's eye land on accessible shelters first.
+        var op = s.dimmed ? 0.35 : 1;
         var icon = L.divIcon({
-          html: '<div style="width:26px;height:26px;border-radius:50%;background:' + color + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:13px;">🏠</div>',
+          html: '<div style="opacity:' + op + ';width:26px;height:26px;border-radius:50%;background:' + color + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:13px;">🏠</div>',
           iconSize: [26, 26],
           className: '',
         });
@@ -250,6 +265,13 @@ export default function MapScreen() {
   // We use this to re-evaluate `userZone` once the data is available.
   const [polygonsReady, setPolygonsReady] = useState(false);
 
+  // Accessibility filter — when ON, non-accessible shelters render dimmed
+  // (still on the map, still clickable, just visually de-emphasized so the
+  // user's eye lands on the ones that match their needs). Mirrored to
+  // `userSettings.isHandicapped` in AsyncStorage so the same flag drives
+  // both this toggle and the Settings screen Switch.
+  const [accessibleOnly, setAccessibleOnly] = useState(false);
+
   // ─── SimJoystick state — fake GPS for demos / QA ─────────────────────────
   const [simOn, setSimOn]         = useState(false);
   const [simCoords, setSimCoords] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -268,6 +290,51 @@ export default function MapScreen() {
   useEffect(() => {
     OrefZonesService.load().then(() => setPolygonsReady(true));
   }, []);
+
+  // ── Accessibility filter — load + sync ──────────────────────────────────
+  // Initial load + re-load every time the screen regains focus, so changes
+  // made on the Settings screen show up when the user comes back.
+  useFocusEffect(useCallback(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('userSettings');
+        if (!raw) return;
+        setAccessibleOnly(!!JSON.parse(raw).isHandicapped);
+      } catch {
+        // Bad JSON in storage — silently ignore, default stays false
+      }
+    })();
+  }, []));
+
+  // Live reload — Settings emits this event right after a successful save,
+  // so if the user changes the Switch while the map is mounted (e.g. via
+  // back-navigation that doesn't re-focus), the toggle still flips.
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(ACCESSIBILITY_SETTINGS_CHANGED_EVENT, () => {
+      AsyncStorage.getItem('userSettings').then(raw => {
+        if (!raw) return;
+        try { setAccessibleOnly(!!JSON.parse(raw).isHandicapped); } catch {}
+      });
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Toggle from the ♿ button on the map. Writes the new value back to the
+  // same AsyncStorage key Settings reads from — Settings will pick it up
+  // on its next focus and push to backend on the next save. We don't POST
+  // from here to keep Settings as the single canonical mutator.
+  const toggleAccessibleOnly = useCallback(async () => {
+    const next = !accessibleOnly;
+    setAccessibleOnly(next);
+    try {
+      const raw = await AsyncStorage.getItem('userSettings');
+      const p = raw ? JSON.parse(raw) : {};
+      p.isHandicapped = next;
+      await AsyncStorage.setItem('userSettings', JSON.stringify(p));
+    } catch {
+      // Storage write failed — toggle still works in-memory for this session
+    }
+  }, [accessibleOnly]);
 
   // Resolve the user's Pikud HaOref zone. Order of preference:
   //   1. The official polygon containing the user's coordinates.
@@ -417,10 +484,17 @@ export default function MapScreen() {
   useEffect(() => {
     if (!webReady || shelterPins.length === 0) return;
     const data = shelterPins.map(s => ({
-      id: s.id, lat: s.latitude, lng: s.longitude, color: getShelterColor(s),
+      id: s.id,
+      lat: s.latitude,
+      lng: s.longitude,
+      color: getShelterColor(s),
+      // When the accessibility filter is on, non-accessible shelters render
+      // at low opacity in the WebView. They stay clickable so a user can
+      // still navigate to one as a fallback in an emergency.
+      dimmed: accessibleOnly && !isShelterAccessible(s),
     }));
     sendToWeb({ type: 'setShelters', data });
-  }, [webReady, shelterPins, sendToWeb]);
+  }, [webReady, shelterPins, accessibleOnly, sendToWeb]);
 
   useEffect(() => {
     if (!webReady || !userLocation) return;
@@ -782,6 +856,22 @@ export default function MapScreen() {
         <Text style={styles.chatFabIcon}>💬</Text>
       </TouchableOpacity>
 
+      {/* ♿ accessibility filter — when active, non-accessible shelters render
+          at low opacity. Mirrors `userSettings.isHandicapped` so Settings and
+          the map stay in sync. */}
+      <TouchableOpacity
+        style={[styles.accessibilityFab, accessibleOnly && styles.accessibilityFabActive]}
+        onPress={toggleAccessibleOnly}
+        testID="accessibility-toggle"
+        accessibilityLabel={
+          accessibleOnly ? 'Show all shelters' : 'Show only accessible shelters'
+        }
+      >
+        <Text style={[styles.accessibilityFabIcon, accessibleOnly && styles.accessibilityFabIconActive]}>
+          ♿
+        </Text>
+      </TouchableOpacity>
+
       {/* Location button */}
       {locationGranted && (
         <TouchableOpacity
@@ -953,6 +1043,30 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   chatFabIcon: { fontSize: 20 },
+
+  // ♿ accessibility filter — stacked under the 💬 chat shortcut. Background
+  // flips to brand blue + white icon when the filter is active so the user
+  // sees the state at a glance without needing a separate banner.
+  accessibilityFab: {
+    position: 'absolute',
+    top: 270,
+    left: 12,
+    backgroundColor: '#fff',
+    borderRadius: 22,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 10,
+  },
+  accessibilityFabActive: { backgroundColor: '#1a73e8' },
+  accessibilityFabIcon: { fontSize: 20 },
+  accessibilityFabIconActive: { color: '#fff' },
 
   locationButton: {
     position: "absolute",

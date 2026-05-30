@@ -23,6 +23,11 @@ import { useAuth } from '@/context/auth';
 // changes register immediately even when the user is sitting still.
 export const GEOFENCE_SETTINGS_CHANGED_EVENT = 'geofence:settings-changed';
 
+// Fired from the Settings screen (or the map ♿ toggle) when the
+// accessibility preference flips. The map listens and re-applies its
+// "dim non-accessible shelters" filter without needing a re-mount.
+export const ACCESSIBILITY_SETTINGS_CHANGED_EVENT = 'accessibility:settings-changed';
+
 const DEFAULT_RADIUS_METERS = 500;
 const MIN_DISTANCE_METERS = 25;
 const MIN_INTERVAL_MS = 10_000;
