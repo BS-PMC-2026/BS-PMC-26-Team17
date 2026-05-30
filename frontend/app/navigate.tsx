@@ -120,19 +120,29 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function NavigateScreen() {
-  const { lat, lng, name, emergency, fromLat, fromLng } =
+  const { lat, lng, name, emergency, fromLat, fromLng, mode: modeParam } =
     useLocalSearchParams<{
       lat: string; lng: string; name: string; emergency?: string;
       // When the SimJoystick on the map was active, these carry the fake
       // start position so navigation begins from the simulated dot instead
       // of waiting for real GPS.
       fromLat?: string; fromLng?: string;
+      // Optional transport-mode override. Settings stores `walking`, the
+      // routing service uses `foot` — translated below.
+      mode?: string;
     }>();
 
   const destLat = parseFloat(lat || '0');
   const destLng = parseFloat(lng || '0');
   const dest: Coord = { latitude: destLat, longitude: destLng };
   const isEmergency = emergency === 'true';
+  // Resolve the initial transport mode from the URL. `walking` is the
+  // settings-side label; the routing service knows it as `foot`.
+  const initialMode: Mode =
+    modeParam === 'walking' || modeParam === 'foot'    ? 'foot'    :
+    modeParam === 'cycling'                            ? 'cycling' :
+    modeParam === 'driving'                            ? 'driving' :
+    'foot';
   // Pre-computed "from" override from the URL — null when not provided.
   const fromOverride: Coord | null =
     fromLat && fromLng
@@ -143,13 +153,13 @@ export default function NavigateScreen() {
   const watchRef       = useRef<Location.LocationSubscription | null>(null);
   const stepsRef       = useRef<any[]>([]);
   const polylineRef    = useRef<Coord[]>([]);
-  const modeRef        = useRef<Mode>('foot');
+  const modeRef        = useRef<Mode>(initialMode);
   const recalcCooldown = useRef(false);
 
   const [phase, setPhase]               = useState<'select' | 'navigating'>(
     isEmergency ? 'navigating' : 'select'
   );
-  const [mode, setMode]                 = useState<Mode>('foot');
+  const [mode, setMode]                 = useState<Mode>(initialMode);
   // Seed userLocation immediately from the override so the background route
   // fetch (3 modes in parallel) starts right away instead of waiting on GPS.
   const [userLocation, setUserLocation] = useState<Coord | null>(fromOverride);
@@ -237,13 +247,15 @@ export default function NavigateScreen() {
   }, [webReady, phase, pushRouteToMap, sendToWeb]);
 
   // ─── Emergency: auto-start navigation as soon as location is available ─
+  // Uses the current `mode` (seeded from `?mode=` in the URL, or 'foot' by
+  // default) so a siren auto-navigation honors the user's saved setting.
   useEffect(() => {
     if (!isEmergency || !userLocation) return;
-    NavigationService.emergencyRoute(userLocation, dest)
+    NavigationService.emergencyRoute(userLocation, dest, mode)
       .then(applyRoute)
       .catch(() => setError('Failed to load emergency route'))
       .finally(() => setLoading(false));
-  }, [isEmergency, userLocation]);
+  }, [isEmergency, userLocation, mode]);
 
   // ─── Apply RouteResult to state ─────────────────────────────────────────
   function applyRoute(result: RouteResult) {
