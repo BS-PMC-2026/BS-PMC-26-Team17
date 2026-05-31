@@ -220,6 +220,32 @@ class ShelterUpdate(BaseModel):
     capacity: Optional[int] = None
 
 
+class ReserveBody(BaseModel):
+    delta: int
+
+
+@router.patch("/{shelter_id}/reserve")
+async def reserve_shelter(shelter_id: str, body: ReserveBody):
+    try:
+        oid = ObjectId(shelter_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid shelter id")
+
+    shelter = await db["ShelterTest"].find_one({"_id": oid})
+    if not shelter:
+        raise HTTPException(status_code=404, detail="Shelter not found")
+
+    current = int(shelter.get("reservedPlaces") or 0)
+    new_value = max(0, current + body.delta)
+
+    await db["ShelterTest"].update_one(
+        {"_id": oid},
+        {"$set": {"reservedPlaces": new_value}},
+    )
+
+    return {"reservedPlaces": new_value}
+
+
 @router.patch("/{shelter_id}")
 async def update_shelter(shelter_id: str, body: ShelterUpdate):
     if not await _is_admin(body.user_id):

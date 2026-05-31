@@ -256,9 +256,13 @@ export default function MapScreen() {
   // Last shelter the siren auto-route picked. Stored so the SirenModeSheet
   // knows where to re-route when the user changes transport mode.
   const lastAutoTargetRef = useRef<ShelterPin | null>(null);
+  const pendingReservationRef = useRef<{ shelterId: string; delta: number } | null>(null);
   // User's saved transport mode (from Settings → AsyncStorage). Reloaded on
   // focus so a fresh change is picked up next time a siren fires.
   const [savedMode, setSavedMode] = useState<SettingsMode>('walking');
+  const [savedChildrenCount, setSavedChildrenCount] = useState(0);
+  const [savedIsHandicapped, setSavedIsHandicapped] = useState(false);
+  const [savedHasPets, setSavedHasPets]             = useState(false);
   // Dedupe so a single siren alert doesn't auto-navigate twice — even if
   // the same alert id re-emits (it shouldn't, but be defensive).
   const sirenHandledIdRef = useRef<string | null>(null);
@@ -398,11 +402,22 @@ export default function MapScreen() {
 
   // Pre-alarm sheet → user picked a shelter. Navigate the regular (non-
   // emergency) way so the user still gets to choose transport mode.
+  // Also reserve spots (1 for the user + one per child) so the shelter's
+  // occupancy count reflects people en route. The reservation is cancelled
+  // when the user navigates back to the map (see useFocusEffect below).
   const handleNearbyPick = useCallback((sh: { id: string }) => {
     setNearbySheetOpen(false);
     const full = shelterPins.find(p => p.id === sh.id);
-    if (full) openShelter(full);
-  }, [shelterPins, openShelter]);
+    if (!full) return;
+    const delta = 1 + savedChildrenCount;
+    fetch(`${API_URL}/shelters/${full.id}/reserve`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delta }),
+    }).catch(() => {});
+    pendingReservationRef.current = { shelterId: full.id, delta };
+    openShelter(full);
+  }, [shelterPins, openShelter, savedChildrenCount]);
 
   // Siren sheet → user changed transport mode. Re-route to the same target
   // the siren originally picked (cached in `lastAutoTargetRef`). We use
@@ -474,6 +489,19 @@ export default function MapScreen() {
   // honors the latest preference without needing a restart.
   useFocusEffect(
     useCallback(() => {
+      // Cancel any reservation made when the user picked a shelter but then
+      // navigated back without actually arriving (e.g. pressed back on the
+      // shelter-details or navigate screen).
+      if (pendingReservationRef.current) {
+        const { shelterId, delta } = pendingReservationRef.current;
+        pendingReservationRef.current = null;
+        fetch(`${API_URL}/shelters/${shelterId}/reserve`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ delta: -delta }),
+        }).catch(() => {});
+      }
+
       (async () => {
         try {
           const saved = await AsyncStorage.getItem("userSettings");
@@ -491,9 +519,15 @@ export default function MapScreen() {
           setSavedMode(
             m === 'cycling' || m === 'driving' ? m : 'walking'
           );
+          setSavedChildrenCount(typeof p.childrenCount === 'number' ? p.childrenCount : 0);
+          setSavedIsHandicapped(!!p.isHandicapped);
+          setSavedHasPets(!!p.hasPets);
         } catch {
           setHome(null);
           setSavedMode('walking');
+          setSavedChildrenCount(0);
+          setSavedIsHandicapped(false);
+          setSavedHasPets(false);
         }
       })();
     }, []),
@@ -971,6 +1005,9 @@ export default function MapScreen() {
               ? { latitude: userLocation.latitude, longitude: userLocation.longitude }
               : null
         }
+        childrenCount={savedChildrenCount}
+        isAccessible={savedIsHandicapped}
+        hasPets={savedHasPets}
       />
 
       {/* Siren sheet — change transport mode mid-route */}

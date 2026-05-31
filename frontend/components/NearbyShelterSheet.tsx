@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import {
   Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView, Pressable,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NavigationService, type Coord } from '@/services/NavigationService';
 
 /**
@@ -9,9 +10,12 @@ import { NavigationService, type Coord } from '@/services/NavigationService';
  * (early-warning) banner. Lists the 10 closest *open* shelters so the user
  * can pre-emptively head to one before an actual siren fires.
  *
- * Filtering rules (match the map's "usable shelter" definition):
+ * Filtering rules:
  *   - excluded: accessStatus = 'closed' | 'locked'
  *   - excluded: shouldBeOpen === false
+ *   - excluded: distance exceeds 10-minute reachable range (speed adjusted for
+ *               mobility impairment and children)
+ *   - excluded: petIssueReported === true when user has pets
  *   - kept: isFull === true  (a full shelter is still better than no shelter)
  *
  * On pick, the parent is told which shelter — it handles the actual
@@ -31,6 +35,7 @@ export type SheetShelter = {
   capacity?: number;
   reservedPlaces?: number;
   actualOccupancy?: number;
+  petIssueReported?: boolean;
 };
 
 type Props = {
@@ -42,33 +47,67 @@ type Props = {
   userLocation: Coord | null;
   /** Max rows to show. Default 10. */
   limit?: number;
+  childrenCount: number;
+  isAccessible: boolean;
+  hasPets: boolean;
 };
 
-function isUsable(s: SheetShelter): boolean {
-  if (s.accessStatus === 'closed' || s.accessStatus === 'locked') return false;
-  if (s.shouldBeOpen === false) return false;
-  return true;
+// 5 km/h = 83.3 m/min
+const BASE_SPEED_MPM = 83.3;
+const MAX_MINUTES    = 10;
+
+function calcMaxDistM(isHandicapped: boolean, childrenCount: number): number {
+  let speed = BASE_SPEED_MPM;
+  if (isHandicapped)    speed *= 0.6;
+  if (childrenCount > 0) speed *= 0.7;
+  return speed * MAX_MINUTES;
 }
 
 export default function NearbyShelterSheet({
   visible, onClose, onPick, shelters, userLocation, limit = 10,
+  childrenCount, isAccessible, hasPets,
 }: Props) {
-  // Compute the sorted list once per render. Cheap (≤ a few hundred items),
-  // so no memo on the inputs is needed — but we still wrap in useMemo to
-  // avoid re-sorting on unrelated parent re-renders.
+  // Load isHandicapped (and confirm childrenCount/hasPets) from persisted settings.
+  const [isHandicapped,       setIsHandicapped]       = useState(false);
+  const [settingsChildrenCount, setSettingsChildrenCount] = useState(childrenCount);
+  const [settingsHasPets,     setSettingsHasPets]     = useState(hasPets);
+
+  useEffect(() => {
+    AsyncStorage.getItem('userSettings').then(raw => {
+      if (!raw) return;
+      try {
+        const p = JSON.parse(raw);
+        setIsHandicapped(!!p.isHandicapped);
+        setSettingsChildrenCount(
+          typeof p.childrenCount === 'number' ? p.childrenCount : childrenCount,
+        );
+        setSettingsHasPets(typeof p.hasPets === 'boolean' ? p.hasPets : hasPets);
+      } catch {}
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const sorted = useMemo(() => {
     if (!userLocation) return [];
+    const maxDistM = calcMaxDistM(isHandicapped, settingsChildrenCount);
+
     return shelters
-      .filter(isUsable)
-      .map(s => ({
-        s,
+      .map(sh => ({
+        s: sh,
         distM: NavigationService.haversineM(userLocation, {
-          latitude: s.latitude, longitude: s.longitude,
+          latitude: sh.latitude, longitude: sh.longitude,
         }),
       }))
+      .filter(({ s: sh, distM }) => {
+        if (sh.accessStatus === 'closed' || sh.accessStatus === 'locked') return false;
+        if (sh.shouldBeOpen === false) return false;
+        if (distM > maxDistM) return false;
+        if (settingsHasPets && sh.petIssueReported === true) return false;
+        return true;
+      })
       .sort((a, b) => a.distM - b.distM)
       .slice(0, limit);
-  }, [shelters, userLocation, limit]);
+  }, [shelters, userLocation, limit, isHandicapped, settingsChildrenCount, settingsHasPets]);
 
   return (
     <Modal

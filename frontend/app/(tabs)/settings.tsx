@@ -61,6 +61,8 @@ export default function SettingsScreen() {
   const [radius, setRadius] = useState('');
   const [transportMode, setTransportMode] = useState('walking');
   const [isHandicapped, setIsHandicapped] = useState(false);
+  const [childrenCount, setChildrenCount] = useState(0);
+  const [hasPets, setHasPets] = useState(false);
 
   // Autocomplete state
   const [suggestions, setSuggestions] = useState<NominatimResult[]>([]);
@@ -85,6 +87,8 @@ export default function SettingsScreen() {
           setRadius(p.radius || '');
           setTransportMode(p.transportMode || 'walking');
           setIsHandicapped(!!p.isHandicapped);
+          setChildrenCount(typeof p.childrenCount === 'number' ? p.childrenCount : 0);
+          setHasPets(!!p.hasPets);
           // If we have stored coords for this address, treat it as "picked"
           if (p.address && typeof p.homeLat === 'number' && typeof p.homeLng === 'number') {
             setAddressIsPicked(true);
@@ -198,6 +202,8 @@ export default function SettingsScreen() {
       radius,
       transportMode,
       isHandicapped,
+      childrenCount,
+      hasPets,
     };
     try {
       await AsyncStorage.setItem('userSettings', JSON.stringify(payload));
@@ -215,6 +221,8 @@ export default function SettingsScreen() {
             exclusion_radius: parseFloat(radius) || 0,
             transport_mode: transportMode,
             is_handicapped: isHandicapped,
+            children_count: childrenCount,
+            has_pets: hasPets,
           }),
         }).catch(() => console.log('Network error, saved locally.'));
       }
@@ -363,6 +371,33 @@ export default function SettingsScreen() {
           <Text style={styles.subtext}>Prioritize street-level or ramped safe zones.</Text>
         </View>
         <Switch value={isHandicapped} onValueChange={setIsHandicapped} />
+      </View>
+
+      {/* Children count */}
+      <View style={styles.section}>
+        <Text style={styles.label}>Number of Children</Text>
+        <Text style={styles.subtext}>
+          How many children are traveling with you during an emergency.
+        </Text>
+        <TextInput
+          style={styles.input}
+          placeholder="0"
+          keyboardType="numeric"
+          value={String(childrenCount)}
+          onChangeText={text => {
+            const n = parseInt(text, 10);
+            setChildrenCount(isNaN(n) || n < 0 ? 0 : n);
+          }}
+        />
+      </View>
+
+      {/* Pets */}
+      <View style={[styles.section, styles.rowSection]}>
+        <View style={styles.textColumn}>
+          <Text style={styles.label}>Traveling with Pets</Text>
+          <Text style={styles.subtext}>Let responders know you have pets with you.</Text>
+        </View>
+        <Switch value={hasPets} onValueChange={setHasPets} />
       </View>
 
       {/* Single save button */}
