@@ -290,11 +290,30 @@ export default function MapScreen() {
   const moveIntent = useRef({ dx: 0, dy: 0 });
   const lastMoveAt = useRef(0);
 
-  // Subscribe to alerts (polling oref.org.il every 3s) for the lifetime of
-  // the map screen. The same hook also receives manual injections fired by
-  // the demo modal — both paths funnel into `setActiveAlert`.
+  // Holds the latest userZone without creating a stale closure inside the
+  // alert subscription. Updated synchronously in a separate effect below
+  // (after userZone is declared via useMemo further down the file).
+  const userZoneRef = useRef<string>('באר שבע');
+
+  // Subscribe to alerts (polling oref.org.il every 3s) and filter to only
+  // show alerts relevant to the user's current zone.
+  // Manual injections (isManual: true) always show — they're already fired
+  // with the correct zone from the demo modal.
+  // Real alerts are shown only if `alert.areas` contains the user's zone.
+  // When userZone is the generic fallback "באר שבע" we match any sub-zone
+  // (e.g. "באר שבע - מזרח") because we don't know the exact district.
   useEffect(() => {
-    return AlertsService.subscribe(setActiveAlert);
+    return AlertsService.subscribe((alert) => {
+      if (alert.isManual) {
+        setActiveAlert(alert);
+        return;
+      }
+      const zone = userZoneRef.current;
+      const matches =
+        alert.areas.includes(zone) ||
+        (zone === 'באר שבע' && alert.areas.some(a => a.startsWith('באר שבע')));
+      if (matches) setActiveAlert(alert);
+    });
   }, []);
 
   // Load the official Pikud HaOref polygons once. `OrefZonesService.load`
@@ -361,6 +380,9 @@ export default function MapScreen() {
     return best ?? 'באר שבע';
   }, [simOn, simCoords, userLocation, shelterPins, polygonsReady]);
 
+  // Keep the ref in sync so the alert subscription closure always reads the
+  // latest zone without needing to re-subscribe on every GPS update.
+  useEffect(() => { userZoneRef.current = userZone; }, [userZone]);
 
   // Helper — send a JSON message into the WebView
   const sendToWeb = useCallback((obj: any) => {
