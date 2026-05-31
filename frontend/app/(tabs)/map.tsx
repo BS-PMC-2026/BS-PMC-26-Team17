@@ -23,7 +23,10 @@ import AlertInjectModal from "@/components/AlertInjectModal";
 import NearbyShelterSheet from "@/components/NearbyShelterSheet";
 import SirenModeSheet, { type SettingsMode } from "@/components/SirenModeSheet";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
-import { GEOFENCE_SETTINGS_CHANGED_EVENT } from "@/hooks/use-home-geofence";
+import {
+  GEOFENCE_SETTINGS_CHANGED_EVENT,
+  GEOFENCE_SIM_POSITION_EVENT,
+} from "@/hooks/use-home-geofence";
 import { NavigationService } from "@/services/NavigationService";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -643,6 +646,20 @@ export default function MapScreen() {
     sendToWeb({ type: 'flyTo', lat: simCoords.latitude, lng: simCoords.longitude, zoom: 16, duration: 0 });
   }, [simOn, simCoords, webReady, sendToWeb]);
 
+  // Push the simulated coords to the geofence hook so the "outside
+  // radius" check honors the joystick instead of the real GPS. When
+  // sim mode is turned off, emit null so the hook resumes real GPS.
+  useEffect(() => {
+    if (simOn && simCoords) {
+      DeviceEventEmitter.emit(GEOFENCE_SIM_POSITION_EVENT, {
+        lat: simCoords.latitude,
+        lng: simCoords.longitude,
+      });
+    } else if (!simOn) {
+      DeviceEventEmitter.emit(GEOFENCE_SIM_POSITION_EVENT, null);
+    }
+  }, [simOn, simCoords]);
+
   const toggleSim = () => {
     if (simOn) {
       setSimOn(false);
@@ -885,6 +902,16 @@ export default function MapScreen() {
         <Text style={styles.chatFabIcon}>💬</Text>
       </TouchableOpacity>
 
+      {/* 🆘 emergency contacts — Israeli emergency / mental-health lines. */}
+      <TouchableOpacity
+        style={styles.sosFab}
+        onPress={() => router.push('/emergency-contacts' as any)}
+        testID="sos-fab"
+        accessibilityLabel="Open emergency contacts"
+      >
+        <Text style={styles.sosFabIcon}>🆘</Text>
+      </TouchableOpacity>
+
       {/* Location button */}
       {locationGranted && (
         <TouchableOpacity
@@ -1083,6 +1110,26 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   chatFabIcon: { fontSize: 20 },
+
+  // 🆘 emergency contacts — stacked under the 💬 chat button.
+  sosFab: {
+    position: 'absolute',
+    top: 222,
+    left: 12,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 10,
+  },
+  sosFabIcon: { fontSize: 20 },
 
   locationButton: {
     position: "absolute",
