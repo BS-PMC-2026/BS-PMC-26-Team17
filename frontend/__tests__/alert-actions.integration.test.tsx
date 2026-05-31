@@ -192,7 +192,7 @@ describe('Alert actions on the map screen', () => {
     setupStorage(null);
     await renderMap();
 
-    await fireAlert({ id: 's2', kind: 'siren', title: 'אזעקה', areas: [] });
+    await fireAlert({ id: 's2', kind: 'siren', title: 'אזעקה', areas: ['באר שבע'] });
 
     await waitFor(() => {
       const url = lastNavigatePush();
@@ -205,7 +205,7 @@ describe('Alert actions on the map screen', () => {
     setupStorage({ transportMode: 'walking' });
     await renderMap();
 
-    const alert: PikudAlert = { id: 'dup', kind: 'siren', title: 'אזעקה', areas: [] };
+    const alert: PikudAlert = { id: 'dup', kind: 'siren', title: 'אזעקה', areas: ['באר שבע'] };
     await fireAlert(alert);
     await fireAlert(alert);
 
@@ -240,7 +240,7 @@ describe('Alert actions on the map screen', () => {
     setupStorage({ transportMode: 'walking' });
     const { getByTestId } = await renderMap();
 
-    await fireAlert({ id: 's3', kind: 'siren', title: 'אזעקה', areas: [] });
+    await fireAlert({ id: 's3', kind: 'siren', title: 'אזעקה', areas: ['באר שבע'] });
     // First push was the auto-navigate (mode=walking).
     await waitFor(() => {
       expect(lastNavigatePush()).toContain('mode=walking');
