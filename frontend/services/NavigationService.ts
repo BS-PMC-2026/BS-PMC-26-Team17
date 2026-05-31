@@ -182,11 +182,12 @@ export class NavigationService {
   }
 
   /**
-   * Emergency mode — always fetches a walking route.
-   * Call this when you need to auto-navigate without user input.
-   * Example: router.push('/navigate?lat=X&lng=Y&emergency=true')
+   * Emergency mode — auto-fetches a route without user mode selection.
+   * Defaults to walking; callers (e.g., a siren auto-navigation) can pass
+   * the user's saved transport mode instead.
+   * Example: router.push('/navigate?lat=X&lng=Y&emergency=true&mode=driving')
    */
-  static async emergencyRoute(from: Coord, to: Coord): Promise<RouteResult> {
-    return NavigationService.fetchRoute(from, to, 'foot');
+  static async emergencyRoute(from: Coord, to: Coord, mode: Mode = 'foot'): Promise<RouteResult> {
+    return NavigationService.fetchRoute(from, to, mode);
   }
 }
