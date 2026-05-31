@@ -168,12 +168,8 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
       for (var i = 0; i < msg.data.length; i++) {
         var s = msg.data[i];
         var color = s.color || '#BA7517';
-        // Soft accessibility filter — dimmed markers stay visible & clickable
-        // (so they remain a fallback in an emergency) but their reduced
-        // opacity makes the user's eye land on accessible shelters first.
-        var op = s.dimmed ? 0.35 : 1;
         var icon = L.divIcon({
-          html: '<div style="opacity:' + op + ';width:26px;height:26px;border-radius:50%;background:' + color + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:13px;">🏠</div>',
+          html: '<div style="width:26px;height:26px;border-radius:50%;background:' + color + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:13px;">🏠</div>',
           iconSize: [26, 26],
           className: '',
         });
@@ -319,22 +315,6 @@ export default function MapScreen() {
     return () => sub.remove();
   }, []);
 
-  // Toggle from the ♿ button on the map. Writes the new value back to the
-  // same AsyncStorage key Settings reads from — Settings will pick it up
-  // on its next focus and push to backend on the next save. We don't POST
-  // from here to keep Settings as the single canonical mutator.
-  const toggleAccessibleOnly = useCallback(async () => {
-    const next = !accessibleOnly;
-    setAccessibleOnly(next);
-    try {
-      const raw = await AsyncStorage.getItem('userSettings');
-      const p = raw ? JSON.parse(raw) : {};
-      p.isHandicapped = next;
-      await AsyncStorage.setItem('userSettings', JSON.stringify(p));
-    } catch {
-      // Storage write failed — toggle still works in-memory for this session
-    }
-  }, [accessibleOnly]);
 
   // Resolve the user's Pikud HaOref zone. Order of preference:
   //   1. The official polygon containing the user's coordinates.
@@ -483,16 +463,17 @@ export default function MapScreen() {
 
   useEffect(() => {
     if (!webReady || shelterPins.length === 0) return;
-    const data = shelterPins.map(s => ({
-      id: s.id,
-      lat: s.latitude,
-      lng: s.longitude,
-      color: getShelterColor(s),
-      // When the accessibility filter is on, non-accessible shelters render
-      // at low opacity in the WebView. They stay clickable so a user can
-      // still navigate to one as a fallback in an emergency.
-      dimmed: accessibleOnly && !isShelterAccessible(s),
-    }));
+    // Hard accessibility filter — when the user has "Mobility Impaired" on in
+    // Settings, only shelters that are both marked accessible AND have no stairs
+    // are sent to the WebView. Non-accessible shelters are hidden entirely.
+    const data = shelterPins
+      .filter(s => !accessibleOnly || isShelterAccessible(s))
+      .map(s => ({
+        id: s.id,
+        lat: s.latitude,
+        lng: s.longitude,
+        color: getShelterColor(s),
+      }));
     sendToWeb({ type: 'setShelters', data });
   }, [webReady, shelterPins, accessibleOnly, sendToWeb]);
 
@@ -856,21 +837,6 @@ export default function MapScreen() {
         <Text style={styles.chatFabIcon}>💬</Text>
       </TouchableOpacity>
 
-      {/* ♿ accessibility filter — when active, non-accessible shelters render
-          at low opacity. Mirrors `userSettings.isHandicapped` so Settings and
-          the map stay in sync. */}
-      <TouchableOpacity
-        style={[styles.accessibilityFab, accessibleOnly && styles.accessibilityFabActive]}
-        onPress={toggleAccessibleOnly}
-        testID="accessibility-toggle"
-        accessibilityLabel={
-          accessibleOnly ? 'Show all shelters' : 'Show only accessible shelters'
-        }
-      >
-        <Text style={[styles.accessibilityFabIcon, accessibleOnly && styles.accessibilityFabIconActive]}>
-          ♿
-        </Text>
-      </TouchableOpacity>
 
       {/* Location button */}
       {locationGranted && (
@@ -1044,29 +1010,6 @@ const styles = StyleSheet.create({
   },
   chatFabIcon: { fontSize: 20 },
 
-  // ♿ accessibility filter — stacked under the 💬 chat shortcut. Background
-  // flips to brand blue + white icon when the filter is active so the user
-  // sees the state at a glance without needing a separate banner.
-  accessibilityFab: {
-    position: 'absolute',
-    top: 270,
-    left: 12,
-    backgroundColor: '#fff',
-    borderRadius: 22,
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 5,
-    zIndex: 10,
-  },
-  accessibilityFabActive: { backgroundColor: '#1a73e8' },
-  accessibilityFabIcon: { fontSize: 20 },
-  accessibilityFabIconActive: { color: '#fff' },
 
   locationButton: {
     position: "absolute",

@@ -512,8 +512,8 @@ describe('Accessibility filter', () => {
     });
   });
 
-  // 2 ── Default state: filter OFF → nothing dimmed
-  it('does not dim any shelter when the filter is off', async () => {
+  // 2 ── Default state: filter OFF → all shelters sent
+  it('sends all shelters when the filter is off', async () => {
     global.fetch = makeFetchWithShelters([accessible, inaccessible, accessibleStairs]);
     grantLocation();
     const { getByTestId } = render(<MapScreen />);
@@ -521,11 +521,10 @@ describe('Accessibility filter', () => {
     await emitFromWeb({ type: 'ready' });
 
     await waitFor(() => expect(lastSetShelters().length).toBe(3));
-    expect(lastSetShelters().every(s => !s.dimmed)).toBe(true);
   });
 
-  // 3 ── Toggle ON → only non-accessible shelters get dimmed
-  it('dims non-accessible shelters when ♿ is pressed', async () => {
+  // 3 ── Filter ON via event → only accessible shelters appear
+  it('hides non-accessible shelters when the filter is on', async () => {
     global.fetch = makeFetchWithShelters([accessible, inaccessible, accessibleStairs]);
     grantLocation();
     const { getByTestId } = render(<MapScreen />);
@@ -533,34 +532,23 @@ describe('Accessibility filter', () => {
     await emitFromWeb({ type: 'ready' });
     await waitFor(() => expect(lastSetShelters().length).toBe(3));
 
-    await act(async () => { fireEvent.press(getByTestId('accessibility-toggle')); });
+    // Turn filter on via the same event Settings would fire
+    (AsyncStorage.getItem as jest.Mock).mockResolvedValueOnce(
+      JSON.stringify({ isHandicapped: true }),
+    );
+    await act(async () => {
+      DeviceEventEmitter.emit(ACCESSIBILITY_SETTINGS_CHANGED_EVENT);
+    });
 
     await waitFor(() => {
-      const byId: Record<string, boolean | undefined> = {};
-      for (const s of lastSetShelters()) byId[s.id] = s.dimmed;
-      expect(byId.acc).toBeFalsy();         // accessible — stays full opacity
-      expect(byId.ina).toBe(true);          // not accessible — dimmed
-      expect(byId.stair).toBe(true);        // accessible but has stairs — still dimmed
+      const ids = lastSetShelters().map((s: any) => s.id);
+      expect(ids).toEqual(['acc']);     // only the fully accessible one
+      expect(ids).not.toContain('ina');
+      expect(ids).not.toContain('stair');
     });
   });
 
-  // 4 ── Toggle persists to AsyncStorage under `userSettings.isHandicapped`
-  it('writes the new preference to AsyncStorage when toggled', async () => {
-    global.fetch = makeFetchWithShelters([accessible]);
-    grantLocation();
-    const { getByTestId } = render(<MapScreen />);
-    await waitFor(() => getByTestId('map-webview'));
-
-    (AsyncStorage.setItem as jest.Mock).mockClear();
-    await act(async () => { fireEvent.press(getByTestId('accessibility-toggle')); });
-
-    await waitFor(() => expect(AsyncStorage.setItem).toHaveBeenCalled());
-    const [key, raw] = (AsyncStorage.setItem as jest.Mock).mock.calls[0];
-    expect(key).toBe('userSettings');
-    expect(JSON.parse(raw)).toMatchObject({ isHandicapped: true });
-  });
-
-  // 5 ── Live sync: Settings emits the event → map re-loads from storage
+  // 4 ── Live sync: Settings emits the event → map re-loads from storage
   it('reacts to the ACCESSIBILITY_SETTINGS_CHANGED_EVENT from Settings', async () => {
     global.fetch = makeFetchWithShelters([accessible, inaccessible]);
     grantLocation();
@@ -568,7 +556,6 @@ describe('Accessibility filter', () => {
     await waitFor(() => getByTestId('map-webview'));
     await emitFromWeb({ type: 'ready' });
     await waitFor(() => expect(lastSetShelters().length).toBe(2));
-    expect(lastSetShelters().every(s => !s.dimmed)).toBe(true);
 
     // Simulate Settings being saved with isHandicapped=true
     (AsyncStorage.getItem as jest.Mock).mockResolvedValueOnce(
@@ -579,10 +566,9 @@ describe('Accessibility filter', () => {
     });
 
     await waitFor(() => {
-      const byId: Record<string, boolean | undefined> = {};
-      for (const s of lastSetShelters()) byId[s.id] = s.dimmed;
-      expect(byId.ina).toBe(true);
-      expect(byId.acc).toBeFalsy();
+      const ids = lastSetShelters().map((s: any) => s.id);
+      expect(ids).toContain('acc');
+      expect(ids).not.toContain('ina');
     });
   });
 });
