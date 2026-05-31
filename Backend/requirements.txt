@@ -7,3 +7,5 @@ certifi
 pydantic
 mongoengine
 requests
+httpx
+anthropic
