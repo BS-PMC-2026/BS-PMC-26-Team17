@@ -20,11 +20,14 @@ import { OrefZonesService } from "@/services/OrefZonesService";
 import SimJoystick from "@/components/SimJoystick";
 import AlertBanner from "@/components/AlertBanner";
 import AlertInjectModal from "@/components/AlertInjectModal";
+import NearbyShelterSheet from "@/components/NearbyShelterSheet";
+import SirenModeSheet, { type SettingsMode } from "@/components/SirenModeSheet";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
 import {
   GEOFENCE_SETTINGS_CHANGED_EVENT,
   ACCESSIBILITY_SETTINGS_CHANGED_EVENT,
 } from "@/hooks/use-home-geofence";
+import { NavigationService } from "@/services/NavigationService";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -257,6 +260,19 @@ export default function MapScreen() {
   // Pikud HaOref alert state — banner + demo injection modal
   const [activeAlert, setActiveAlert] = useState<PikudAlert | null>(null);
   const [alertInjectOpen, setAlertInjectOpen] = useState(false);
+  // Banner-tap action sheets — one for each alert kind. At most one is open
+  // at a time (we just track them separately to keep the conditional simple).
+  const [nearbySheetOpen, setNearbySheetOpen] = useState(false);
+  const [sirenSheetOpen,  setSirenSheetOpen]  = useState(false);
+  // Last shelter the siren auto-route picked. Stored so the SirenModeSheet
+  // knows where to re-route when the user changes transport mode.
+  const lastAutoTargetRef = useRef<ShelterPin | null>(null);
+  // User's saved transport mode (from Settings → AsyncStorage). Reloaded on
+  // focus so a fresh change is picked up next time a siren fires.
+  const [savedMode, setSavedMode] = useState<SettingsMode>('walking');
+  // Dedupe so a single siren alert doesn't auto-navigate twice — even if
+  // the same alert id re-emits (it shouldn't, but be defensive).
+  const sirenHandledIdRef = useRef<string | null>(null);
   // Tracks whether the official Pikud HaOref polygons finished loading.
   // We use this to re-evaluate `userZone` once the data is available.
   const [polygonsReady, setPolygonsReady] = useState(false);
@@ -366,6 +382,86 @@ export default function MapScreen() {
     router.push(`/shelter-details?${shelterParams(sh)}${suffix}` as any);
   }, [simOn, simCoords]);
 
+  // ── Alert handling — banner taps + siren auto-navigate ──────────────────
+  // Kept together here, after `openShelter`, because `handleNearbyPick`
+  // delegates to it for the regular (mode-select) navigation flow.
+
+  // Pick the closest usable shelter to the current (real or simulated)
+  // position. "Usable" = not closed/locked and not admin-hidden. Full
+  // shelters are kept — the user in a siren still needs *somewhere* to go.
+  const findNearestUsableShelter = useCallback((): ShelterPin | null => {
+    const pos = simOn ? simCoords : userLocation;
+    if (!pos || shelterPins.length === 0) return null;
+    let best: ShelterPin | null = null;
+    let bestDist = Infinity;
+    for (const sh of shelterPins) {
+      if (sh.accessStatus === 'closed' || sh.accessStatus === 'locked') continue;
+      if (sh.shouldBeOpen === false) continue;
+      const d = NavigationService.haversineM(
+        { latitude: pos.latitude, longitude: pos.longitude },
+        { latitude: sh.latitude, longitude: sh.longitude },
+      );
+      if (d < bestDist) { bestDist = d; best = sh; }
+    }
+    return best;
+  }, [simOn, simCoords, userLocation, shelterPins]);
+
+  // Push the navigate screen with the siren auto-route params. Pulled out
+  // so both the initial siren effect and the SirenModeSheet ("change mode")
+  // call into the same code path.
+  const pushSirenNavigate = useCallback((target: ShelterPin, mode: SettingsMode) => {
+    const suffix = (!simOn || !simCoords)
+      ? ''
+      : `&fromLat=${simCoords.latitude}&fromLng=${simCoords.longitude}`;
+    const params =
+      `lat=${target.latitude}` +
+      `&lng=${target.longitude}` +
+      `&name=${encodeURIComponent(target.name || 'מקלט')}` +
+      `&emergency=true` +
+      `&mode=${mode}` +
+      suffix;
+    router.push(`/navigate?${params}` as any);
+  }, [simOn, simCoords]);
+
+  // Siren → auto-navigate immediately to the nearest usable shelter using
+  // the user's saved transport mode (defaults to walking). Dedupes per
+  // alert id so a single event never triggers two navigations.
+  useEffect(() => {
+    if (!activeAlert || activeAlert.kind !== 'siren') return;
+    if (sirenHandledIdRef.current === activeAlert.id) return;
+    const target = findNearestUsableShelter();
+    if (!target) return;  // no shelter known yet — banner is still up; user can pick manually
+    sirenHandledIdRef.current = activeAlert.id;
+    lastAutoTargetRef.current = target;
+    pushSirenNavigate(target, savedMode);
+  }, [activeAlert, savedMode, findNearestUsableShelter, pushSirenNavigate]);
+
+  // Banner tap → open the right sheet for the current alert kind.
+  const handleBannerPress = useCallback(() => {
+    if (!activeAlert) return;
+    if (activeAlert.kind === 'early') setNearbySheetOpen(true);
+    else                              setSirenSheetOpen(true);
+  }, [activeAlert]);
+
+  // Pre-alarm sheet → user picked a shelter. Navigate the regular (non-
+  // emergency) way so the user still gets to choose transport mode.
+  const handleNearbyPick = useCallback((sh: { id: string }) => {
+    setNearbySheetOpen(false);
+    const full = shelterPins.find(p => p.id === sh.id);
+    if (full) openShelter(full);
+  }, [shelterPins, openShelter]);
+
+  // Siren sheet → user changed transport mode. Re-route to the same target
+  // the siren originally picked (cached in `lastAutoTargetRef`). We use
+  // router.push (not replace) because the user is currently on the map —
+  // there's no existing navigate screen on top to replace.
+  const handleSirenModePick = useCallback((mode: SettingsMode) => {
+    setSirenSheetOpen(false);
+    const target = lastAutoTargetRef.current ?? findNearestUsableShelter();
+    if (!target) return;
+    pushSirenNavigate(target, mode);
+  }, [findNearestUsableShelter, pushSirenNavigate]);
+
   // Load shelters from the API
   useEffect(() => {
     (async () => {
@@ -421,12 +517,14 @@ export default function MapScreen() {
 
   // Reload home settings every time the map gains focus, so the circle
   // reflects whatever the user most recently saved in Settings.
+  // We also pick up the saved transport mode here so the siren auto-route
+  // honors the latest preference without needing a restart.
   useFocusEffect(
     useCallback(() => {
       (async () => {
         try {
           const saved = await AsyncStorage.getItem("userSettings");
-          if (!saved) { setHome(null); return; }
+          if (!saved) { setHome(null); setSavedMode('walking'); return; }
           const p = JSON.parse(saved);
           const lat = typeof p.homeLat === "number" ? p.homeLat : null;
           const lng = typeof p.homeLng === "number" ? p.homeLng : null;
@@ -436,8 +534,13 @@ export default function MapScreen() {
           } else {
             setHome(null);
           }
+          const m = p.transportMode;
+          setSavedMode(
+            m === 'cycling' || m === 'driving' ? m : 'walking'
+          );
         } catch {
           setHome(null);
+          setSavedMode('walking');
         }
       })();
     }, []),
@@ -900,11 +1003,38 @@ export default function MapScreen() {
       )}
 
       {/* Pikud HaOref alert — banner overlay + demo injection modal */}
-      <AlertBanner alert={activeAlert} onDismiss={() => setActiveAlert(null)} />
+      <AlertBanner
+        alert={activeAlert}
+        onDismiss={() => setActiveAlert(null)}
+        onPress={handleBannerPress}
+      />
       <AlertInjectModal
         visible={alertInjectOpen}
         onClose={() => setAlertInjectOpen(false)}
         area={userZone}
+      />
+
+      {/* Pre-alarm sheet — list of nearby open shelters */}
+      <NearbyShelterSheet
+        visible={nearbySheetOpen}
+        onClose={() => setNearbySheetOpen(false)}
+        onPick={handleNearbyPick}
+        shelters={shelterPins}
+        userLocation={
+          simOn && simCoords
+            ? { latitude: simCoords.latitude, longitude: simCoords.longitude }
+            : userLocation
+              ? { latitude: userLocation.latitude, longitude: userLocation.longitude }
+              : null
+        }
+      />
+
+      {/* Siren sheet — change transport mode mid-route */}
+      <SirenModeSheet
+        visible={sirenSheetOpen}
+        onClose={() => setSirenSheetOpen(false)}
+        onPick={handleSirenModePick}
+        currentMode={savedMode}
       />
     </View>
   );
