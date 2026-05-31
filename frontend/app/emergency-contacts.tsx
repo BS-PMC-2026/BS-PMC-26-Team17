@@ -197,7 +197,7 @@ export default function EmergencyContactsScreen() {
 
       <Text style={styles.disclaimer}>
         For immediate danger, call 101 (MDA) or 100 (Police).{'\n'}
-        If you're in physical danger right now, take shelter first.
+        If you&apos;re in physical danger right now, take shelter first.
       </Text>
     </ScrollView>
   );
