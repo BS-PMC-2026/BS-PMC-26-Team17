@@ -40,8 +40,40 @@ jest.mock('@react-navigation/native', () => ({
   useFocusEffect: jest.fn(),
 }));
 
+// Use a logged-in user so reservation POSTs can identify the reserver.
 jest.mock('@/context/auth', () => ({
-  useAuth: () => ({ user: null }),
+  useAuth: () => ({ user: { id: 'user-1', email: 'u@x.com', name: 'U', role: 'user' } }),
+}));
+
+// Capture ReservationService.reserve + .release calls so we can assert
+// on payloads. Typed `(arg: any)` so .mock.calls[i][0] is typed and TS
+// can verify the integration test's payload assertions.
+const mockReserve: jest.Mock<Promise<any>, [any]> = jest.fn((_arg: any) =>
+  Promise.resolve({
+    reservation_id:  'r1',
+    shelter_id:      'near-1',
+    reservedPlaces:  1,
+    actualOccupancy: 0,
+    capacity:        10,
+    isFull:          false,
+    expiresAt:       '2030-01-01T00:00:00Z',
+  }),
+);
+const mockRelease: jest.Mock<Promise<any>, [any]> = jest.fn((_arg: any) =>
+  Promise.resolve({
+    shelter_id:      'near-1',
+    released:        true,
+    reservedPlaces:  0,
+    actualOccupancy: 0,
+    capacity:        10,
+    isFull:          false,
+  }),
+);
+jest.mock('@/services/ReservationService', () => ({
+  ReservationService: {
+    reserve: (arg: any) => mockReserve(arg),
+    release: (arg: any) => mockRelease(arg),
+  },
 }));
 
 // Capture the listener AlertsService.subscribe is called with so tests can
@@ -159,6 +191,8 @@ const lastNavigatePush = (): string | null => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockReserve.mockClear();
+  mockRelease.mockClear();
   alertListener = null;
   webOnMessage = null;
   // Run the focus effect inline — settings are loaded from AsyncStorage here.
@@ -171,7 +205,7 @@ beforeEach(() => {
 
 describe('Alert actions on the map screen', () => {
 
-  it('siren auto-pushes /navigate to the nearest open shelter with emergency=true&mode=<saved>', async () => {
+  it('siren auto-pushes /navigate to the nearest open shelter with emergency=true&mode=<saved> + reservation context', async () => {
     setupStorage({ transportMode: 'driving' });
     await renderMap();
 
@@ -185,6 +219,29 @@ describe('Alert actions on the map screen', () => {
       // The "near" shelter should win over "closed-1" (filtered) and "far-1".
       expect(url!).toContain(`lat=${SHELTERS[0].lat}`);
       expect(url!).toContain(`lng=${SHELTERS[0].lng}`);
+      // Reservation context for the SirenGroupPromptModal on navigate.tsx
+      expect(url!).toContain('alertId=s1');
+      expect(url!).toContain('alertKind=siren');
+      expect(url!).toContain('shelterId=near-1');
+      expect(url!).toContain('initialGroupSize=1');
+    });
+  });
+
+  it('siren auto-POSTs a 1-person reservation against the chosen shelter', async () => {
+    setupStorage({ transportMode: 'walking' });
+    await renderMap();
+
+    await fireAlert({ id: 's1', kind: 'siren', title: 'אזעקה', areas: [] });
+
+    await waitFor(() => {
+      expect(mockReserve).toHaveBeenCalledTimes(1);
+      expect(mockReserve).toHaveBeenCalledWith({
+        shelterId: 'near-1',
+        userId:    'user-1',
+        alertId:   's1',
+        alertKind: 'siren',
+        groupSize: 1,
+      });
     });
   });
 
@@ -215,14 +272,15 @@ describe('Alert actions on the map screen', () => {
     expect(navCalls).toHaveLength(1);
   });
 
-  it('early-warning does NOT auto-navigate; tapping the banner opens the nearby-shelter sheet', async () => {
+  it('early-warning does NOT auto-navigate or auto-reserve; tapping the banner opens the nearby-shelter sheet', async () => {
     setupStorage({ transportMode: 'walking' });
     const { getByTestId, queryByTestId } = await renderMap();
 
     await fireAlert({ id: 'e1', kind: 'early', title: 'התרעה מוקדמת', areas: ['באר שבע'] });
 
-    // No /navigate push from a pre-alarm.
+    // No /navigate push and no reservation from a pre-alarm.
     expect(lastNavigatePush()).toBeNull();
+    expect(mockReserve).not.toHaveBeenCalled();
     // Banner is shown; sheet is hidden until tap.
     expect(queryByTestId('nearby-sheet-list')).toBeNull();
 
@@ -233,6 +291,54 @@ describe('Alert actions on the map screen', () => {
       expect(getByTestId('nearby-sheet-row-near-1')).toBeTruthy();
       expect(getByTestId('nearby-sheet-row-far-1')).toBeTruthy();
       expect(queryByTestId('nearby-sheet-row-closed-1')).toBeNull();
+    });
+  });
+
+  it('pre-alarm shelter pick POSTs a reservation with the stepper count', async () => {
+    setupStorage({ transportMode: 'walking' });
+    const { getByTestId } = await renderMap();
+
+    await fireAlert({ id: 'e1', kind: 'early', title: 'התרעה מוקדמת', areas: [] });
+    fireEvent.press(getByTestId('alert-banner-press'));
+    await waitFor(() => expect(getByTestId('nearby-sheet-list')).toBeTruthy());
+
+    // Bump the stepper from 1 → 3
+    fireEvent.press(getByTestId('nearby-sheet-group-size-inc'));
+    fireEvent.press(getByTestId('nearby-sheet-group-size-inc'));
+    fireEvent.press(getByTestId('nearby-sheet-row-far-1'));
+
+    await waitFor(() => {
+      expect(mockReserve).toHaveBeenCalledWith({
+        shelterId: 'far-1',
+        userId:    'user-1',
+        alertId:   'e1',
+        alertKind: 'early',
+        groupSize: 3,
+      });
+    });
+  });
+
+  it('siren-sheet group-size change POSTs a reservation update against the auto-picked shelter', async () => {
+    setupStorage({ transportMode: 'walking' });
+    const { getByTestId } = await renderMap();
+
+    await fireAlert({ id: 's5', kind: 'siren', title: 'אזעקה', areas: [] });
+    // Auto-reservation fired once for 1 person.
+    await waitFor(() => expect(mockReserve).toHaveBeenCalledTimes(1));
+
+    fireEvent.press(getByTestId('alert-banner-press'));
+    await waitFor(() => expect(getByTestId('siren-sheet-group-size-stepper')).toBeTruthy());
+
+    fireEvent.press(getByTestId('siren-sheet-group-size-inc'));  // 1 → 2
+    await waitFor(() => {
+      const calls = mockReserve.mock.calls;
+      expect(calls.length).toBeGreaterThan(1);  // 1 auto + ≥1 from stepper
+      const lastCall: any = calls[calls.length - 1][0];
+      expect(lastCall).toMatchObject({
+        shelterId: 'near-1',
+        alertId:   's5',
+        groupSize: 2,
+      });
     });
   });
 
@@ -258,7 +364,50 @@ describe('Alert actions on the map screen', () => {
         typeof url === 'string' && (url as string).startsWith('/navigate'),
       );
       expect(navCalls.length).toBe(initialNavCount + 1);
-      expect(navCalls[navCalls.length - 1][0]).toContain('mode=driving');
+      const reroute = navCalls[navCalls.length - 1][0] as string;
+      expect(reroute).toContain('mode=driving');
+      // skipPrompt=true so the navigate screen doesn't re-open the
+      // SirenGroupPromptModal on the re-mounted screen — the user has
+      // already answered the count prompt during this alert.
+      expect(reroute).toContain('skipPrompt=true');
+    });
+  });
+
+  it('siren auto-navigate does NOT set skipPrompt (first push should show the prompt)', async () => {
+    setupStorage({ transportMode: 'walking' });
+    await renderMap();
+
+    await fireAlert({ id: 's-fresh', kind: 'siren', title: 'אזעקה', areas: [] });
+
+    await waitFor(() => {
+      const url = lastNavigatePush();
+      expect(url).not.toBeNull();
+      expect(url!).not.toContain('skipPrompt=true');
+    });
+  });
+
+  it('siren-mode-pick re-POSTs a reservation (so resume-after-cancel re-engages the user)', async () => {
+    setupStorage({ transportMode: 'walking' });
+    const { getByTestId } = await renderMap();
+
+    await fireAlert({ id: 's-resume', kind: 'siren', title: 'אזעקה', areas: [] });
+    // 1 auto-POST from siren fire.
+    await waitFor(() => expect(mockReserve).toHaveBeenCalledTimes(1));
+
+    fireEvent.press(getByTestId('alert-banner-press'));
+    await waitFor(() => expect(getByTestId('siren-mode-driving')).toBeTruthy());
+
+    fireEvent.press(getByTestId('siren-mode-driving'));
+    await waitFor(() => {
+      // Auto-POST + mode-pick re-POST = 2 calls; the second one is a fresh
+      // reservation for the same shelter so a previously-released user re-engages.
+      expect(mockReserve).toHaveBeenCalledTimes(2);
+      expect(mockReserve.mock.calls[1][0]).toMatchObject({
+        shelterId: 'near-1',
+        alertId:   's-resume',
+        alertKind: 'siren',
+        groupSize: 1,
+      });
     });
   });
 });

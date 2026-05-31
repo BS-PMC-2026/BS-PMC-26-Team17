@@ -41,3 +41,40 @@ class ShelterTest(Document):
     lastReportType   = StringField(default="")
 
     meta = {"collection": "ShelterTest"}
+
+
+class ShelterReservation(Document):
+    """
+    A user's intent to head to a specific shelter during a specific Pikud
+    HaOref alert. Created by POST /shelters/{id}/reserve.
+
+    Why per-row instead of just bumping a counter:
+      - lets the TTL sweeper decrement by exactly the right amount when it
+        rolls back an expired reservation
+      - lets us upsert by (userId, shelterId, alertId) so the same user
+        changing their group size during the same alert updates one row
+        instead of stacking duplicates
+      - auditable: we know who reserved where during which event
+
+    Lifecycle:
+      created → (sweeper after expiresAt) → rolledBack
+    """
+    shelterId  = StringField(required=True)
+    userId     = StringField(required=True)
+    alertId    = StringField(required=True)
+    alertKind  = StringField(default="siren")        # "early" | "siren"
+    groupSize  = IntField(required=True, min_value=1, max_value=20)
+
+    createdAt  = DateTimeField(required=True)
+    expiresAt  = DateTimeField(required=True)        # createdAt + TTL window
+    rolledBack = BooleanField(default=False)
+
+    meta = {
+        "collection": "ShelterReservation",
+        "indexes": [
+            # Upsert lookup
+            {"fields": ["userId", "shelterId", "alertId"]},
+            # Sweeper scan — finds expired but not-yet-rolled-back rows
+            {"fields": ["expiresAt", "rolledBack"]},
+        ],
+    }

@@ -1,9 +1,11 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import health, auth, shelters, reports, admin, settings, chat
 from app.routes.MessageAll import geofence, broadcast
 from app.core.database import client
+from app.core.reservations import sweeper_loop
 
 
 @asynccontextmanager
@@ -13,7 +15,19 @@ async def lifespan(app: FastAPI):
         print("✅ Connected to MongoDB Atlas!")
     except Exception as e:
         print(f"❌ MongoDB connection failed: {e}")
-    yield
+
+    # Kick off the reservation TTL sweeper. It runs forever in the
+    # background, decrementing `reservedPlaces` on shelters as each
+    # ShelterReservation row expires.
+    sweeper_task = asyncio.create_task(sweeper_loop())
+    try:
+        yield
+    finally:
+        sweeper_task.cancel()
+        try:
+            await sweeper_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 app = FastAPI(title="ToSafePlace API", version="1.0.0", lifespan=lifespan)

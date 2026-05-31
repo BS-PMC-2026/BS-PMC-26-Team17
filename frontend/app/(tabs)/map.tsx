@@ -25,6 +25,7 @@ import SirenModeSheet, { type SettingsMode } from "@/components/SirenModeSheet";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
 import { GEOFENCE_SETTINGS_CHANGED_EVENT } from "@/hooks/use-home-geofence";
 import { NavigationService } from "@/services/NavigationService";
+import { ReservationService, type AlertKind } from "@/services/ReservationService";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -40,6 +41,8 @@ type ShelterPin = {
   city?: string;
   placeType?: string;
   capacity?: number;
+  reservedPlaces?: number;
+  actualOccupancy?: number;
   accessStatus?: string;
   isFull?: boolean;
   isAccessible?: boolean;
@@ -361,8 +364,19 @@ export default function MapScreen() {
 
   // Push the navigate screen with the siren auto-route params. Pulled out
   // so both the initial siren effect and the SirenModeSheet ("change mode")
-  // call into the same code path.
-  const pushSirenNavigate = useCallback((target: ShelterPin, mode: SettingsMode) => {
+  // call into the same code path. Passes reservation context so the navigate
+  // screen can render the SirenGroupPromptModal and update the count.
+  //
+  // `skipPrompt` is true when the user is being re-routed mid-alert (mode
+  // change after they already answered the count prompt). Without this flag,
+  // the SirenGroupPromptModal would re-open every time we re-push /navigate.
+  const pushSirenNavigate = useCallback((
+    target: ShelterPin,
+    mode: SettingsMode,
+    alert: PikudAlert,
+    initialGroupSize = 1,
+    skipPrompt = false,
+  ) => {
     const suffix = (!simOn || !simCoords)
       ? ''
       : `&fromLat=${simCoords.latitude}&fromLng=${simCoords.longitude}`;
@@ -372,13 +386,57 @@ export default function MapScreen() {
       `&name=${encodeURIComponent(target.name || 'מקלט')}` +
       `&emergency=true` +
       `&mode=${mode}` +
+      `&alertId=${encodeURIComponent(alert.id)}` +
+      `&alertKind=${alert.kind}` +
+      `&shelterId=${encodeURIComponent(target.id)}` +
+      `&initialGroupSize=${initialGroupSize}` +
+      (skipPrompt ? `&skipPrompt=true` : '') +
       suffix;
     router.push(`/navigate?${params}` as any);
   }, [simOn, simCoords]);
 
+  // Locally bump a shelter pin's reservedPlaces / isFull so the marker
+  // recolors immediately after a reservation POST, without re-fetching.
+  const updateShelterPinFromReserve = useCallback((
+    shelterId: string,
+    reservedPlaces: number,
+    isFull: boolean,
+  ) => {
+    setShelterPins(prev =>
+      prev.map(p => p.id === shelterId ? { ...p, reservedPlaces, isFull } : p)
+    );
+  }, []);
+
+  // Reservation POST with local-state side effect. Best-effort: errors
+  // are logged but never block navigation. Returns true on success so
+  // callers can decide whether to surface a toast.
+  const postReservation = useCallback(async (
+    target: ShelterPin,
+    alert: PikudAlert,
+    groupSize: number,
+  ): Promise<boolean> => {
+    if (!user?.id) return false;
+    try {
+      const result = await ReservationService.reserve({
+        shelterId: target.id,
+        userId:    user.id,
+        alertId:   alert.id,
+        alertKind: alert.kind as AlertKind,
+        groupSize,
+      });
+      updateShelterPinFromReserve(target.id, result.reservedPlaces, result.isFull);
+      return true;
+    } catch (e) {
+      console.warn('[map] reservation failed:', e);
+      return false;
+    }
+  }, [user, updateShelterPinFromReserve]);
+
   // Siren → auto-navigate immediately to the nearest usable shelter using
   // the user's saved transport mode (defaults to walking). Dedupes per
   // alert id so a single event never triggers two navigations.
+  // Also auto-POSTs a 1-person reservation so the shelter's reservedPlaces
+  // reflects the user's intent even if they never tap the banner.
   useEffect(() => {
     if (!activeAlert || activeAlert.kind !== 'siren') return;
     if (sirenHandledIdRef.current === activeAlert.id) return;
@@ -386,8 +444,11 @@ export default function MapScreen() {
     if (!target) return;  // no shelter known yet — banner is still up; user can pick manually
     sirenHandledIdRef.current = activeAlert.id;
     lastAutoTargetRef.current = target;
-    pushSirenNavigate(target, savedMode);
-  }, [activeAlert, savedMode, findNearestUsableShelter, pushSirenNavigate]);
+    // Fire reservation in parallel with navigation — don't make the user
+    // wait on a network roundtrip before the route starts loading.
+    postReservation(target, activeAlert, 1);
+    pushSirenNavigate(target, savedMode, activeAlert, 1);
+  }, [activeAlert, savedMode, findNearestUsableShelter, pushSirenNavigate, postReservation]);
 
   // Banner tap → open the right sheet for the current alert kind.
   const handleBannerPress = useCallback(() => {
@@ -396,24 +457,42 @@ export default function MapScreen() {
     else                              setSirenSheetOpen(true);
   }, [activeAlert]);
 
-  // Pre-alarm sheet → user picked a shelter. Navigate the regular (non-
-  // emergency) way so the user still gets to choose transport mode.
-  const handleNearbyPick = useCallback((sh: { id: string }) => {
+  // Pre-alarm sheet → user picked a shelter + group size. POST the
+  // reservation (best-effort) and then navigate the regular (non-emergency)
+  // way so the user still gets to choose transport mode.
+  const handleNearbyPick = useCallback((sh: { id: string }, groupSize: number) => {
     setNearbySheetOpen(false);
     const full = shelterPins.find(p => p.id === sh.id);
-    if (full) openShelter(full);
-  }, [shelterPins, openShelter]);
+    if (!full) return;
+    if (activeAlert) postReservation(full, activeAlert, groupSize);
+    openShelter(full);
+  }, [shelterPins, openShelter, activeAlert, postReservation]);
 
-  // Siren sheet → user changed transport mode. Re-route to the same target
-  // the siren originally picked (cached in `lastAutoTargetRef`). We use
-  // router.push (not replace) because the user is currently on the map —
-  // there's no existing navigate screen on top to replace.
+  // Siren sheet → user changed transport mode. Re-route to the same target.
+  // skipPrompt=true so the SirenGroupPromptModal doesn't re-open on the
+  // re-mounted navigate screen — the user already answered earlier.
+  //
+  // Also POSTs a fresh reservation: if the user had cancelled (X'd out
+  // of /navigate before), the unmount cleanup released the reservation.
+  // Re-engaging via the sheet should re-commit them to the shelter. The
+  // upsert is keyed by (user, shelter, alert), so a previously-rolled-back
+  // row stays rolled back and a fresh active row is inserted.
   const handleSirenModePick = useCallback((mode: SettingsMode) => {
     setSirenSheetOpen(false);
     const target = lastAutoTargetRef.current ?? findNearestUsableShelter();
-    if (!target) return;
-    pushSirenNavigate(target, mode);
-  }, [findNearestUsableShelter, pushSirenNavigate]);
+    if (!target || !activeAlert) return;
+    postReservation(target, activeAlert, 1);
+    pushSirenNavigate(target, mode, activeAlert, 1, true);
+  }, [findNearestUsableShelter, pushSirenNavigate, activeAlert, postReservation]);
+
+  // Siren sheet → user adjusted the group-size stepper. Update the
+  // existing reservation against the auto-picked shelter (the same one
+  // navigate.tsx is routing them to).
+  const handleSirenGroupSizeChange = useCallback((groupSize: number) => {
+    const target = lastAutoTargetRef.current;
+    if (!target || !activeAlert) return;
+    postReservation(target, activeAlert, groupSize);
+  }, [activeAlert, postReservation]);
 
   // Load shelters from the API
   useEffect(() => {
@@ -447,6 +526,8 @@ export default function MapScreen() {
               city: sh.city,
               placeType: sh.placeType,
               capacity: sh.capacity,
+              reservedPlaces: sh.reservedPlaces,
+              actualOccupancy: sh.actualOccupancy,
               accessStatus: sh.accessStatus,
               isFull: sh.isFull,
               isAccessible: sh.isAccessible,
@@ -973,11 +1054,13 @@ export default function MapScreen() {
         }
       />
 
-      {/* Siren sheet — change transport mode mid-route */}
+      {/* Siren sheet — change transport mode mid-route and/or update
+          the group-size count for the auto-picked shelter. */}
       <SirenModeSheet
         visible={sirenSheetOpen}
         onClose={() => setSirenSheetOpen(false)}
         onPick={handleSirenModePick}
+        onGroupSizeChange={handleSirenGroupSizeChange}
         currentMode={savedMode}
       />
     </View>
