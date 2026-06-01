@@ -190,8 +190,13 @@ const renderMap = async () => {
 };
 
 const fireAlert = async (alert: PikudAlert) => {
+  // Mark as manual so dev's zone-filter in map.tsx's AlertsService
+  // subscription (which only forwards alerts whose `areas` includes the
+  // user's resolved zone) lets the test alert through unconditionally.
+  // Real alerts and demo injections are equivalent from our flow's POV;
+  // we just need the activeAlert state to update.
   await act(async () => {
-    alertListener?.(alert);
+    alertListener?.({ ...alert, isManual: true });
   });
 };
 
