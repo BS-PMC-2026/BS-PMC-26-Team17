@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Modal, View, Text, StyleSheet, TouchableOpacity, Pressable,
 } from 'react-native';
+import GroupSizeStepper from '@/components/GroupSizeStepper';
 
 /**
  * Siren action sheet — shown when the user taps the "אזעקה" (siren)
@@ -30,11 +31,34 @@ const OPTIONS: ModeOption[] = [
 type Props = {
   visible: boolean;
   onClose: () => void;
+  /** Called when the user picks a transport mode (may be the same as current). */
   onPick: (mode: SettingsMode) => void;
+  /**
+   * Called whenever the group-size stepper changes. The parent should
+   * POST an updated reservation so the shelter's reservedPlaces tracks
+   * what the user committed to during the alert.
+   */
+  onGroupSizeChange?: (groupSize: number) => void;
   currentMode: SettingsMode;
+  /** Initial group size for the stepper. Default 1. */
+  initialGroupSize?: number;
 };
 
-export default function SirenModeSheet({ visible, onClose, onPick, currentMode }: Props) {
+export default function SirenModeSheet({
+  visible, onClose, onPick, onGroupSizeChange, currentMode, initialGroupSize = 1,
+}: Props) {
+  // Reset the stepper to the latest `initialGroupSize` every time the
+  // sheet opens — otherwise yesterday's count would linger.
+  const [groupSize, setGroupSize] = useState(initialGroupSize);
+  useEffect(() => {
+    if (visible) setGroupSize(initialGroupSize);
+  }, [visible, initialGroupSize]);
+
+  const handleGroupSize = (next: number) => {
+    setGroupSize(next);
+    onGroupSizeChange?.(next);
+  };
+
   return (
     <Modal
       visible={visible}
@@ -47,6 +71,14 @@ export default function SirenModeSheet({ visible, onClose, onPick, currentMode }
           <View style={s.handle} />
           <Text style={s.title}>שינוי אופן הניווט</Text>
           <Text style={s.sub}>נווט כעת אל המקלט הקרוב ביותר</Text>
+
+          <View style={s.stepperWrap}>
+            <GroupSizeStepper
+              value={groupSize}
+              onChange={handleGroupSize}
+              testIDPrefix="siren-sheet-group-size"
+            />
+          </View>
 
           <View style={s.grid}>
             {OPTIONS.map(opt => {
@@ -95,7 +127,8 @@ const s = StyleSheet.create({
     marginBottom: 12,
   },
   title: { fontSize: 18, fontWeight: '800', color: '#222', textAlign: 'right' },
-  sub:   { fontSize: 13, color: '#666', marginTop: 4, marginBottom: 18, textAlign: 'right' },
+  sub:   { fontSize: 13, color: '#666', marginTop: 4, marginBottom: 14, textAlign: 'right' },
+  stepperWrap: { marginBottom: 14 },
 
   grid: {
     flexDirection: 'row',

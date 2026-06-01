@@ -9,6 +9,9 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { NavigationService, RouteResult } from '@/services/NavigationService';
 import type { Mode, Coord } from '@/services/NavigationService';
 import SimJoystick from '@/components/SimJoystick';
+import SirenGroupPromptModal from '@/components/SirenGroupPromptModal';
+import { ReservationService } from '@/services/ReservationService';
+import { useAuth } from '@/context/auth';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -120,7 +123,17 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function NavigateScreen() {
-  const { lat, lng, name, emergency, fromLat, fromLng, mode: modeParam } =
+  const {
+    lat, lng, name, emergency, fromLat, fromLng, mode: modeParam,
+    // Reservation context — only set on the siren auto-navigate path.
+    // Used to render the SirenGroupPromptModal and to PATCH the existing
+    // reservation when the user confirms a new group size.
+    alertId, alertKind, shelterId, initialGroupSize: initialGroupSizeParam,
+    // Suppresses the SirenGroupPromptModal auto-open. Set to "true" when
+    // the user is being re-routed (e.g., changed transport mode) and has
+    // already answered the count prompt earlier in the same alert.
+    skipPrompt,
+  } =
     useLocalSearchParams<{
       lat: string; lng: string; name: string; emergency?: string;
       // When the SimJoystick on the map was active, these carry the fake
@@ -130,7 +143,12 @@ export default function NavigateScreen() {
       // Optional transport-mode override. Settings stores `walking`, the
       // routing service uses `foot` — translated below.
       mode?: string;
+      // Reservation context (siren-only).
+      alertId?: string; alertKind?: string; shelterId?: string;
+      initialGroupSize?: string;
+      skipPrompt?: string;
     }>();
+  const { user } = useAuth();
 
   const destLat = parseFloat(lat || '0');
   const destLng = parseFloat(lng || '0');
@@ -143,6 +161,14 @@ export default function NavigateScreen() {
     modeParam === 'cycling'                            ? 'cycling' :
     modeParam === 'driving'                            ? 'driving' :
     'foot';
+
+  // Whether we have enough reservation context to update the count from
+  // this screen. Map screen passes these on the siren auto-navigate path.
+  const reservationReady = !!(alertId && shelterId && user?.id);
+  const initialReservationSize = (() => {
+    const n = parseInt(initialGroupSizeParam || '1', 10);
+    return Number.isFinite(n) && n >= 1 ? n : 1;
+  })();
   // Pre-computed "from" override from the URL — null when not provided.
   const fromOverride: Coord | null =
     fromLat && fromLng
@@ -155,6 +181,14 @@ export default function NavigateScreen() {
   const polylineRef    = useRef<Coord[]>([]);
   const modeRef        = useRef<Mode>(initialMode);
   const recalcCooldown = useRef(false);
+  // Set once the arrival POST succeeds — used to (a) skip duplicate
+  // /arrive calls if the geofence trips multiple times, and (b) suppress
+  // the unmount-release (the user is physically there; we don't want
+  // to undo their arrival).
+  const arrivedRef     = useRef(false);
+  // Guard against firing /arrive multiple times concurrently while the
+  // first request is in flight.
+  const arriveInFlight = useRef(false);
 
   const [phase, setPhase]               = useState<'select' | 'navigating'>(
     isEmergency ? 'navigating' : 'select'
@@ -177,6 +211,81 @@ export default function NavigateScreen() {
   // route fetches use it (instead of racing against real GPS).
   const [simOn, setSimOn]               = useState<boolean>(!!fromOverride);
   const [simCoords, setSimCoords]       = useState<Coord | null>(fromOverride);
+
+  // SirenGroupPromptModal — opens automatically on emergency mount if we
+  // have full reservation context AND the caller didn't ask to skip it.
+  // `skipPrompt=true` is set when the user is being re-routed mid-alert
+  // (e.g., changed transport mode) and has already answered once.
+  const [groupPromptOpen, setGroupPromptOpen] = useState(
+    isEmergency && reservationReady && skipPrompt !== 'true',
+  );
+
+  const handleGroupSizeConfirm = useCallback(async (groupSize: number) => {
+    setGroupPromptOpen(false);
+    if (!reservationReady) return;
+    try {
+      await ReservationService.reserve({
+        shelterId: shelterId!,
+        userId:    user!.id,
+        alertId:   alertId!,
+        alertKind: (alertKind === 'early' ? 'early' : 'siren'),
+        groupSize,
+      });
+    } catch (e) {
+      // Reservation update is best-effort — the route is already loading
+      // and the 1-person default reservation stands. Log but don't block.
+      console.warn('[nav] reservation update failed:', e);
+    }
+  }, [reservationReady, shelterId, alertId, alertKind, user]);
+
+  // Auto-release the reservation when the user backs out of the navigate
+  // screen. Idempotent server-side, so it's safe to fire even when no
+  // active reservation exists. Captures the IDs in locals so the cleanup
+  // closure isn't recreated on every render.
+  //
+  // Deps are all primitives (user?.id, not user) so React's render-time
+  // reference equality doesn't fire the cleanup mid-render.
+  //
+  // Ungated from `isEmergency` — pre-alarm reservations should also
+  // release on back. Gated on `arrivedRef` instead: once the user has
+  // physically arrived, the row is in actualOccupancy land and /release
+  // is a no-op anyway, but skipping the call avoids a useless POST.
+  const userId = user?.id;
+  useEffect(() => {
+    if (!reservationReady || !userId) return;
+    const capturedShelterId = shelterId!;
+    const capturedAlertId   = alertId!;
+    return () => {
+      if (arrivedRef.current) return;
+      // Fire and forget — we're tearing down; no way to surface errors.
+      ReservationService.release({
+        shelterId: capturedShelterId,
+        userId:    userId,
+        alertId:   capturedAlertId,
+      }).catch((e) => console.warn('[nav] release on unmount failed:', e));
+    };
+  }, [reservationReady, shelterId, alertId, userId]);
+
+  // Try to promote the reservation to arrived if the user is within 10m
+  // of the destination. Called from advanceOnRoute on every GPS / sim tick.
+  // No-ops when reservation context is missing, the user has already
+  // arrived, or another POST is in flight.
+  const ARRIVAL_RADIUS_M = 10;
+  const tryArrive = useCallback((pos: Coord) => {
+    if (!reservationReady || !userId) return;
+    if (arrivedRef.current || arriveInFlight.current) return;
+    const dist = NavigationService.haversineM(pos, dest);
+    if (dist > ARRIVAL_RADIUS_M) return;
+    arriveInFlight.current = true;
+    ReservationService.arrive({
+      shelterId: shelterId!,
+      userId,
+      alertId:   alertId!,
+    })
+      .then(() => { arrivedRef.current = true; })
+      .catch((e) => console.warn('[nav] arrive failed:', e))
+      .finally(() => { arriveInFlight.current = false; });
+  }, [reservationReady, userId, shelterId, alertId, dest]);
 
   // Helper — send a JSON message into the WebView
   const sendToWeb = useCallback((obj: any) => {
@@ -401,6 +510,11 @@ export default function NavigateScreen() {
 
   // ─── Update step / remaining polyline / ETA on every GPS tick ───────────
   function advanceOnRoute(pos: Coord) {
+    // Arrival check: if the user is within 10m of the destination during
+    // an active alert reservation, promote the row to actualOccupancy.
+    // Idempotent — tryArrive itself guards against double-firing.
+    tryArrive(pos);
+
     if (stepsRef.current.length > 0) {
       setCurrentStep(NavigationService.nearestStepIndex(stepsRef.current, pos));
     }
@@ -586,6 +700,16 @@ export default function NavigateScreen() {
           </Text>
         )}
       </View>
+
+      {/* Siren popup — auto-opens once on emergency mount so the user
+          can update the auto-reserved 1-person count with the actual
+          group size they're with. Dismissing leaves the default in place. */}
+      <SirenGroupPromptModal
+        visible={groupPromptOpen}
+        onConfirm={handleGroupSizeConfirm}
+        onDismiss={() => setGroupPromptOpen(false)}
+        initialGroupSize={initialReservationSize}
+      />
     </SafeAreaView>
   );
 }

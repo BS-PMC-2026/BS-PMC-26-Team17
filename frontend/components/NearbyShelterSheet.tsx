@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView, Pressable,
 } from 'react-native';
 import { NavigationService, type Coord } from '@/services/NavigationService';
+import GroupSizeStepper from '@/components/GroupSizeStepper';
 
 /**
  * Pre-alarm action sheet — shown when the user taps the "התרעה מוקדמת"
@@ -36,12 +37,19 @@ export type SheetShelter = {
 type Props = {
   visible: boolean;
   onClose: () => void;
-  onPick: (s: SheetShelter) => void;
+  /**
+   * Fires when the user picks a shelter from the list. The group size is
+   * captured by the stepper at the top of the sheet so the parent can
+   * post the reservation in one call.
+   */
+  onPick: (s: SheetShelter, groupSize: number) => void;
   shelters: SheetShelter[];
   /** User's current position — needed to sort by distance. Null = no GPS yet. */
   userLocation: Coord | null;
   /** Max rows to show. Default 10. */
   limit?: number;
+  /** Initial value for the group-size stepper. Default 1. */
+  initialGroupSize?: number;
 };
 
 function isUsable(s: SheetShelter): boolean {
@@ -51,8 +59,15 @@ function isUsable(s: SheetShelter): boolean {
 }
 
 export default function NearbyShelterSheet({
-  visible, onClose, onPick, shelters, userLocation, limit = 10,
+  visible, onClose, onPick, shelters, userLocation, limit = 10, initialGroupSize = 1,
 }: Props) {
+  // Local stepper state — reset to `initialGroupSize` every time the sheet
+  // opens so a user opening it twice doesn't see a stale count.
+  const [groupSize, setGroupSize] = useState(initialGroupSize);
+  useEffect(() => {
+    if (visible) setGroupSize(initialGroupSize);
+  }, [visible, initialGroupSize]);
+
   // Compute the sorted list once per render. Cheap (≤ a few hundred items),
   // so no memo on the inputs is needed — but we still wrap in useMemo to
   // avoid re-sorting on unrelated parent re-renders.
@@ -84,6 +99,14 @@ export default function NearbyShelterSheet({
           <Text style={s.title}>מקלטים בקרבת מקום</Text>
           <Text style={s.sub}>בחר/י מקלט שאליו תרצה/י להגיע</Text>
 
+          <View style={s.stepperWrap}>
+            <GroupSizeStepper
+              value={groupSize}
+              onChange={setGroupSize}
+              testIDPrefix="nearby-sheet-group-size"
+            />
+          </View>
+
           {!userLocation && (
             <Text style={s.empty}>ממתין למיקום…</Text>
           )}
@@ -101,7 +124,7 @@ export default function NearbyShelterSheet({
                 <TouchableOpacity
                   key={sh.id}
                   style={s.row}
-                  onPress={() => onPick(sh)}
+                  onPress={() => onPick(sh, groupSize)}
                   testID={`nearby-sheet-row-${sh.id}`}
                 >
                   <View style={s.rowMain}>
@@ -152,6 +175,7 @@ const s = StyleSheet.create({
   },
   title:   { fontSize: 18, fontWeight: '800', color: '#222', textAlign: 'right' },
   sub:     { fontSize: 13, color: '#666', marginTop: 4, marginBottom: 14, textAlign: 'right' },
+  stepperWrap: { marginBottom: 12 },
   empty:   { textAlign: 'center', color: '#888', paddingVertical: 24, fontSize: 14 },
 
   list: { maxHeight: 420 },
