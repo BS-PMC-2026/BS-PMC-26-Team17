@@ -23,6 +23,10 @@ import { useAuth } from '@/context/auth';
 // changes register immediately even when the user is sitting still.
 export const GEOFENCE_SETTINGS_CHANGED_EVENT = 'geofence:settings-changed';
 
+// Fired from the Settings screen when the "Mobility Impaired" toggle is
+// saved. The map listens for it and re-applies its accessibility filter
+// (hides non-accessible shelters) without requiring a re-focus.
+
 // Fired from the map's SimJoystick (debug movement). Payload is the
 // simulated lat/lng — or `null` when sim mode is turned off, signaling
 // the hook to resume using the real GPS. While a non-null sim payload

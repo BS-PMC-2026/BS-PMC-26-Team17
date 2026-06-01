@@ -2,7 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import health, auth, shelters, reports, admin, settings, chat
+from app.routes import health, auth, shelters, reports, admin, settings, chat, buildings
 from app.routes.MessageAll import geofence, broadcast
 from app.core.database import client
 from app.core.reservations import sweeper_loop
@@ -48,6 +48,7 @@ app.include_router(geofence.router)
 app.include_router(broadcast.router)
 app.include_router(settings.router)
 app.include_router(chat.router)
+app.include_router(buildings.router)
 
 
 @app.on_event("startup")

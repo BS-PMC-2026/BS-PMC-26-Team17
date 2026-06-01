@@ -73,6 +73,12 @@ export default function SettingsScreen() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Building manager registration status (BSPMT17-371/374)
+  const [myRegistration, setMyRegistration] = useState<
+    | { id: string; registrationStatus: string }
+    | null
+  >(null);
+
   // Reload settings every time the screen comes into focus, so updates made
   // from the map (e.g., "Set as Home") show up here without a restart.
   useFocusEffect(
@@ -95,9 +101,60 @@ export default function SettingsScreen() {
         } catch (err) {
           console.error('Failed to load settings:', err);
         }
+
+        // Fetch building registration status — fail silently
+        try {
+          const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
+          if (API_URL && user?.id) {
+            const res = await fetch(`${API_URL}/buildings/my/${user.id}`);
+            if (res.ok) {
+              const json = await res.json();
+              setMyRegistration(json.registration || null);
+            }
+          }
+        } catch {
+          // ignore
+        }
       })();
-    }, []),
+    }, [user?.id]),
   );
+
+  // Cancel building registration (BSPMT17-374)
+  const cancelRegistration = () => {
+    if (!myRegistration || !user?.id) return;
+    Alert.alert(
+      'Cancel registration?',
+      'Your building registration will be cancelled. You can register again later.',
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Cancel registration',
+          style: 'destructive',
+          onPress: async () => {
+            const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
+            try {
+              const res = await fetch(
+                `${API_URL}/buildings/${myRegistration.id}/cancel`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ user_id: user.id }),
+                },
+              );
+              if (!res.ok) {
+                const j = await res.json().catch(() => ({}));
+                Alert.alert('Failed', j.detail || 'Could not cancel');
+                return;
+              }
+              setMyRegistration(null);
+            } catch (e: any) {
+              Alert.alert('Network error', String(e?.message || e));
+            }
+          },
+        },
+      ],
+    );
+  };
 
   // Debounced Nominatim search whenever the user types in the address field
   const onAddressChange = (text: string) => {
@@ -375,6 +432,33 @@ export default function SettingsScreen() {
       <TouchableOpacity style={styles.saveButton} onPress={saveSettings}>
         <Text style={styles.saveButtonText}>Save Preferences</Text>
       </TouchableOpacity>
+
+      {/* Building Manager Registration (BSPMT17-371 / 374) */}
+      <View style={styles.adminSection}>
+        <Text style={styles.adminSectionTitle}>Building Manager</Text>
+        {myRegistration ? (
+          <>
+            <Text style={styles.fieldOk}>
+              ✅ Building registered (status: {myRegistration.registrationStatus})
+            </Text>
+            <TouchableOpacity
+              style={[styles.logoutButton, { marginTop: 10 }]}
+              onPress={cancelRegistration}
+              testID="cancel-building-registration"
+            >
+              <Text style={styles.logoutButtonText}>Cancel Registration</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={styles.adminBtn}
+            onPress={() => router.push('/building-registration' as any)}
+            testID="register-building-button"
+          >
+            <Text style={styles.adminBtnText}>📋 Register as Building Manager</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
       {/* Admin-only section. Without the sidebar there's no other entry
           point to the dashboard, so we expose it here. */}
