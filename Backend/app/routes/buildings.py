@@ -1,0 +1,144 @@
+"""Building Manager Registration (BSPMT17-371 / 374).
+
+A building manager registers their building by creating a new shelter document
+in the existing ``ShelterTest`` collection. The new doc is marked
+``isActive: False`` / ``isVisibleOnMap: False`` so it is hidden from the map
+until an admin approves it via the existing Shelter Dashboard.
+
+Auth pattern follows ``reports.py``: ``user_id`` is passed explicitly in the
+body / path, no FastAPI ``Depends`` is used.
+"""
+from datetime import datetime, timezone
+from typing import Optional
+
+from bson import ObjectId
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from app.core.database import db
+
+router = APIRouter(prefix="/buildings", tags=["buildings"])
+
+
+class BuildingRegistrationRequest(BaseModel):
+    user_id: str
+    address: str
+    lat: float
+    lng: float
+    city: Optional[str] = None
+    neighborhood: Optional[str] = None
+    alertZone: Optional[str] = None
+    apartmentCount: int
+    shelterLocation: str
+    entranceCode: Optional[str] = None
+    fileBase64: Optional[str] = None
+    fileName: Optional[str] = None
+
+
+def _serialize(doc: dict) -> dict:
+    out = dict(doc)
+    out["id"] = str(out.pop("_id"))
+    return out
+
+
+@router.post("/register")
+async def register_building(body: BuildingRegistrationRequest):
+    existing = await db["ShelterTest"].find_one(
+        {
+            "managerUserId": body.user_id,
+            "registrationStatus": {"$ne": "cancelled"},
+        }
+    )
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="You already have an active building registration",
+        )
+
+    shelter_name = f"{body.address} - {body.shelterLocation}".strip(" -")
+    estimated_capacity = (body.apartmentCount or 0) * 3
+
+    doc = {
+        # Real ShelterTest schema fields (matches existing shelters)
+        "name": shelter_name,
+        "lat": body.lat,
+        "lng": body.lng,
+        "address": body.address,
+        "city": body.city or "",
+        "neighborhood": body.neighborhood or "",
+        "alertZone": body.alertZone or "",
+        "placeType": "underground",
+        "capacity": estimated_capacity,
+        "demographicPotential": estimated_capacity,
+        "isAccessible": False,
+        "hasStairs": False,
+        "accessStatus": "unknown",
+        "isFull": False,
+        "shouldBeOpen": True,
+        "petIssueReported": False,
+        "cleanlinessStatus": "unknown",
+        "lastReportType": "",
+        "lastReportAt": datetime(1970, 1, 1, tzinfo=timezone.utc),
+        "reservedPlaces": 0,
+        "actualOccupancy": 0,
+        "entranceCode": body.entranceCode or "",
+        "isArnonaDiscount": False,
+        "isActive": False,         # hidden until admin approves
+        "isVisibleOnMap": False,
+        # Building-registration-specific fields (new)
+        "managerUserId": body.user_id,
+        "apartmentCount": body.apartmentCount,
+        "shelterLocation": body.shelterLocation,
+        "registrationStatus": "pending",
+        "registrationFileBase64": body.fileBase64,
+        "registrationFileName": body.fileName,
+        "registeredAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = await db["ShelterTest"].insert_one(doc)
+    return {"id": str(result.inserted_id), "message": "Building registered"}
+
+
+@router.get("/my/{user_id}")
+async def get_my_registration(user_id: str):
+    doc = await db["ShelterTest"].find_one(
+        {
+            "managerUserId": user_id,
+            "registrationStatus": {"$ne": "cancelled"},
+        }
+    )
+    if not doc:
+        return {"registration": None}
+    doc.pop("registrationFileBase64", None)
+    return {"registration": _serialize(doc)}
+
+
+class CancelRegistrationRequest(BaseModel):
+    user_id: str
+
+
+@router.post("/{registration_id}/cancel")
+async def cancel_registration(registration_id: str, body: CancelRegistrationRequest):
+    try:
+        oid = ObjectId(registration_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid registration id")
+
+    doc = await db["ShelterTest"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if doc.get("managerUserId") != body.user_id:
+        raise HTTPException(status_code=403, detail="Not your registration")
+
+    await db["ShelterTest"].update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "registrationStatus": "cancelled",
+                "isActive": False,
+                "isVisibleOnMap": False,
+                "cancelledAt": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
+    return {"message": "Registration cancelled"}
