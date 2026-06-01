@@ -134,7 +134,7 @@ describe('NearbyShelterSheet', () => {
     expect(getByText('10/100')).toBeTruthy();
   });
 
-  it('calls onPick with the chosen shelter when a row is tapped', () => {
+  it('calls onPick with the chosen shelter and the current group size', () => {
     const onPick = jest.fn();
     const target = mk({ id: 'pick-me' });
     const { getByTestId } = render(
@@ -148,7 +148,29 @@ describe('NearbyShelterSheet', () => {
     );
     fireEvent.press(getByTestId('nearby-sheet-row-pick-me'));
     expect(onPick).toHaveBeenCalledTimes(1);
-    expect(onPick).toHaveBeenCalledWith(target);
+    // Default group size is 1; the second arg ensures the stepper value
+    // travels with the pick so the parent can post a reservation.
+    expect(onPick).toHaveBeenCalledWith(target, 1);
+  });
+
+  it('passes the current stepper value through to onPick', () => {
+    const onPick = jest.fn();
+    const target = mk({ id: 'pick-me' });
+    const { getByTestId } = render(
+      <NearbyShelterSheet
+        visible
+        onClose={jest.fn()}
+        onPick={onPick}
+        shelters={[target]}
+        userLocation={USER}
+      />,
+    );
+    // Tap + a few times to bump the stepper to 4
+    fireEvent.press(getByTestId('nearby-sheet-group-size-inc'));
+    fireEvent.press(getByTestId('nearby-sheet-group-size-inc'));
+    fireEvent.press(getByTestId('nearby-sheet-group-size-inc'));
+    fireEvent.press(getByTestId('nearby-sheet-row-pick-me'));
+    expect(onPick).toHaveBeenLastCalledWith(target, 4);
   });
 
   it('calls onClose when the cancel button is tapped', () => {

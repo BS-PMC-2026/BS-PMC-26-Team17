@@ -8,11 +8,21 @@ import { ACCESSIBILITY_SETTINGS_CHANGED_EVENT } from '@/hooks/use-home-geofence'
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+// Captured so tests can simulate the user moving (drives the live
+// watchPositionAsync subscription added to the map screen).
+let watchCallback: ((loc: any) => void) | null = null;
+const mockWatchRemove = jest.fn();
+
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  watchPositionAsync: jest.fn((_opts: any, cb: any) => {
+    watchCallback = cb;
+    return Promise.resolve({ remove: mockWatchRemove });
+  }),
   reverseGeocodeAsync: jest.fn(() => Promise.resolve([])),
   geocodeAsync: jest.fn(() => Promise.resolve([])),
+  Accuracy: { High: 4, Balanced: 3 },
 }));
 
 jest.mock('expo-router', () => ({
@@ -120,7 +130,9 @@ const SHELTER_A = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockPostMessage.mockClear();
+  mockWatchRemove.mockClear();
   webOnMessage = null;
+  watchCallback = null;
   global.fetch = jest.fn(() =>
     Promise.resolve({
       ok: true,

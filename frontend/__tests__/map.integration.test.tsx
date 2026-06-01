@@ -6,8 +6,10 @@ import MapScreen from '../app/(tabs)/map';
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  watchPositionAsync: jest.fn(() => Promise.resolve({ remove: jest.fn() })),
   reverseGeocodeAsync: jest.fn(() => Promise.resolve([])),
   geocodeAsync: jest.fn(() => Promise.resolve([])),
+  Accuracy: { High: 4, Balanced: 3 },
 }));
 
 jest.mock('expo-router', () => ({
