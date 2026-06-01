@@ -285,3 +285,55 @@ async def approve_building(registration_id: str, body: ApproveRequest):
             print(f"[buildings] push notification failed: {e}")
 
     return {"message": "Building approved", "id": registration_id}
+
+
+@router.patch("/{registration_id}/reject")
+async def reject_building(registration_id: str, body: ApproveRequest):
+    """Admin: reject a pending building registration."""
+    if not await _is_admin(body.user_id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        oid = ObjectId(registration_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid registration id")
+
+    doc = await db["ShelterTest"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Building registration not found")
+    if doc.get("registrationStatus") == "rejected":
+        raise HTTPException(status_code=409, detail="Already rejected")
+
+    await db["ShelterTest"].update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "registrationStatus": "rejected",
+                "isActive":           False,
+                "isVisibleOnMap":     False,
+                "rejectedAt":         datetime.now(timezone.utc).isoformat(),
+                "rejectedBy":         body.user_id,
+            }
+        },
+    )
+
+    # Send push notification to the building manager (best-effort).
+    manager_id = doc.get("managerUserId")
+    if manager_id:
+        try:
+            manager = await db["User"].find_one({"_id": ObjectId(manager_id)})
+            token = manager.get("expoPushToken") if manager else None
+            if token:
+                await send_expo_push(
+                    tokens=[token],
+                    title="Building Registration Rejected ❌",
+                    body=(
+                        f"Your building registration at {doc.get('address', 'your address')} "
+                        "was not approved. Please contact support for more information."
+                    ),
+                    data={"type": "building_rejected", "buildingId": registration_id},
+                )
+        except Exception as e:
+            print(f"[buildings] push notification failed: {e}")
+
+    return {"message": "Building rejected", "id": registration_id}
