@@ -14,8 +14,8 @@ type Building = {
   address: string;
   city: string;
   managerName?: string;
-  userId?: string;
-  registrationStatus: 'pending' | 'approved';
+  managerUserId?: string;
+  registrationStatus: 'pending' | 'approved' | 'rejected';
   entranceCode?: string;
   fileUrl?: string;
   fileName?: string;
@@ -25,15 +25,17 @@ type Building = {
   createdAt?: string;
 };
 
-type Filter = 'All' | 'pending' | 'approved';
+type Filter = 'All' | 'pending' | 'approved' | 'rejected';
 
 const STATUS_COLORS: Record<string, string> = {
   pending:  '#BA7517',
   approved: '#1D9E75',
+  rejected: '#E24B4A',
 };
 const STATUS_LABELS: Record<string, string> = {
   pending:  'Pending',
   approved: 'Approved',
+  rejected: 'Rejected',
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -64,6 +66,7 @@ export default function BuildingsDashboard() {
   const [loading, setLoading]     = useState(true);
   const [filter, setFilter]       = useState<Filter>('All');
   const [approving, setApproving] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState<string | null>(null);
 
   // Detail modal
   const [selected, setSelected]   = useState<Building | null>(null);
@@ -121,6 +124,45 @@ export default function BuildingsDashboard() {
     );
   };
 
+  const reject = async (building: Building) => {
+    Alert.alert(
+      'Reject Building',
+      `Reject registration for:\n${building.address}, ${building.city}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reject',
+          style: 'destructive',
+          onPress: async () => {
+            setRejecting(building.id);
+            try {
+              const res = await fetch(`${API_URL}/buildings/${building.id}/reject`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: user?.id }),
+              });
+              if (!res.ok) {
+                const err = await res.json();
+                Alert.alert('Error', err.detail || 'Failed to reject');
+                return;
+              }
+              setBuildings(prev =>
+                prev.map(b => b.id === building.id
+                  ? { ...b, registrationStatus: 'rejected' }
+                  : b
+                )
+              );
+            } catch {
+              Alert.alert('Error', 'Failed to connect to server');
+            } finally {
+              setRejecting(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const openForm = (building: Building) => {
     if (building.fileUrl) {
       Linking.openURL(building.fileUrl).catch(() =>
@@ -139,6 +181,7 @@ export default function BuildingsDashboard() {
   const totalCount    = buildings.length;
   const pendingCount  = buildings.filter(b => b.registrationStatus === 'pending').length;
   const approvedCount = buildings.filter(b => b.registrationStatus === 'approved').length;
+  const rejectedCount = buildings.filter(b => b.registrationStatus === 'rejected').length;
 
   if (!isAdmin) {
     return (
@@ -164,6 +207,7 @@ export default function BuildingsDashboard() {
         {[
           { label: 'Pending',  value: pendingCount,  color: '#BA7517', main: false },
           { label: 'Approved', value: approvedCount, color: '#1D9E75', main: false },
+          { label: 'Rejected', value: rejectedCount, color: '#E24B4A', main: false },
           { label: 'Total',    value: totalCount,    color: '#fff',    main: true  },
         ].map(c => (
           <View key={c.label} style={[s.statCard, c.main && s.statMain]}>
@@ -175,7 +219,7 @@ export default function BuildingsDashboard() {
 
       {/* Filter buttons */}
       <View style={s.filterRow}>
-        {(['All', 'pending', 'approved'] as Filter[]).map(f => {
+        {(['All', 'pending', 'approved', 'rejected'] as Filter[]).map(f => {
           const active = filter === f;
           const label  = f === 'All' ? 'All' : STATUS_LABELS[f];
           return (
@@ -198,16 +242,16 @@ export default function BuildingsDashboard() {
         <Text style={s.empty}>No buildings found</Text>
       ) : (
         <ScrollView horizontal showsHorizontalScrollIndicator style={{ flex: 1 }}>
-          <View style={{ minWidth: 780 }}>
+          <View style={{ minWidth: 840 }}>
             {/* Table header */}
             <View style={s.tableHeader}>
               {[
-                { label: 'Address',      w: 160 },
-                { label: 'City',         w: 100 },
-                { label: 'Manager',      w: 130 },
-                { label: 'Status',       w: 100 },
+                { label: 'Address',       w: 160 },
+                { label: 'City',          w: 100 },
+                { label: 'Manager',       w: 130 },
+                { label: 'Status',        w: 100 },
                 { label: 'Entrance Code', w: 110 },
-                { label: 'Actions',      w: 180 },
+                { label: 'Actions',       w: 240 },
               ].map(col => (
                 <Text key={col.label} style={[s.headerCell, { width: col.w }]}>
                   {col.label}
@@ -221,7 +265,7 @@ export default function BuildingsDashboard() {
                 <View key={item.id} style={[s.row, i % 2 === 0 && s.rowAlt]}>
                   {/* Address */}
                   <TouchableOpacity
-                    style={{ width: 160, paddingHorizontal: 8 }}
+                    style={{ width: 160, paddingHorizontal: 4 }}
                     onPress={() => setSelected(item)}
                   >
                     <Text style={s.cellBold} numberOfLines={2}>{item.address}</Text>
@@ -232,9 +276,9 @@ export default function BuildingsDashboard() {
                     {item.city || '—'}
                   </Text>
 
-                  {/* Manager */}
+                  {/* Manager name */}
                   <Text style={[s.cell, { width: 130 }]} numberOfLines={1}>
-                    {item.managerName || item.userId || '—'}
+                    {item.managerName || '—'}
                   </Text>
 
                   {/* Status */}
@@ -248,19 +292,32 @@ export default function BuildingsDashboard() {
                   </Text>
 
                   {/* Actions */}
-                  <View style={[s.actionsCell, { width: 180 }]}>
+                  <View style={[s.actionsCell, { width: 240 }]}>
                     {item.registrationStatus === 'pending' && (
-                      <TouchableOpacity
-                        style={s.approveBtn}
-                        onPress={() => approve(item)}
-                        disabled={approving === item.id}
-                        testID={`approve-${item.id}`}
-                      >
-                        {approving === item.id
-                          ? <ActivityIndicator size="small" color="#fff" />
-                          : <Text style={s.approveBtnTxt}>✓ Approve</Text>
-                        }
-                      </TouchableOpacity>
+                      <>
+                        <TouchableOpacity
+                          style={s.approveBtn}
+                          onPress={() => approve(item)}
+                          disabled={approving === item.id || rejecting === item.id}
+                          testID={`approve-${item.id}`}
+                        >
+                          {approving === item.id
+                            ? <ActivityIndicator size="small" color="#fff" />
+                            : <Text style={s.approveBtnTxt}>✓</Text>
+                          }
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={s.rejectBtn}
+                          onPress={() => reject(item)}
+                          disabled={rejecting === item.id || approving === item.id}
+                          testID={`reject-${item.id}`}
+                        >
+                          {rejecting === item.id
+                            ? <ActivityIndicator size="small" color="#fff" />
+                            : <Text style={s.rejectBtnTxt}>✕</Text>
+                          }
+                        </TouchableOpacity>
+                      </>
                     )}
                     <TouchableOpacity
                       style={s.viewBtn}
@@ -298,7 +355,7 @@ export default function BuildingsDashboard() {
 
           <ScrollView contentContainerStyle={md.body}>
             {[
-              { label: 'Manager',          value: selected?.managerName || selected?.userId },
+              { label: 'Manager',          value: selected?.managerName || selected?.managerUserId },
               { label: 'Status',           value: selected?.registrationStatus },
               { label: 'Entrance Code',    value: selected?.entranceCode },
               { label: 'Apartments',       value: selected?.apartmentCount?.toString() },
@@ -374,15 +431,20 @@ const s = StyleSheet.create({
   row:     { flexDirection: 'row', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: '#222', backgroundColor: '#1c1c1c', alignItems: 'center', minHeight: 64 },
   rowAlt:  { backgroundColor: '#1f1f1f' },
   cell:    { fontSize: 13, color: '#ccc', paddingHorizontal: 4, textAlign: 'center' },
-  cellBold: { fontSize: 13, color: '#fff', fontWeight: '500', paddingHorizontal: 4 },
+  cellBold:   { fontSize: 13, color: '#fff', fontWeight: '500', paddingHorizontal: 4 },
   cellCenter: { paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center' },
 
-  actionsCell: { flexDirection: 'row', gap: 6, paddingHorizontal: 6, alignItems: 'center' },
+  actionsCell: { flexDirection: 'row', gap: 6, paddingHorizontal: 4, alignItems: 'center' },
   approveBtn: {
     backgroundColor: '#1D9E75', borderRadius: 8,
-    paddingHorizontal: 10, paddingVertical: 6, minWidth: 80, alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 6, minWidth: 36, alignItems: 'center',
   },
-  approveBtnTxt: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  approveBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  rejectBtn: {
+    backgroundColor: '#E24B4A', borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 6, minWidth: 36, alignItems: 'center',
+  },
+  rejectBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
   viewBtn: {
     backgroundColor: '#2a2a2a', borderRadius: 8, borderWidth: 0.5, borderColor: '#555',
     paddingHorizontal: 10, paddingVertical: 6, alignItems: 'center',

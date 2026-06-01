@@ -205,14 +205,27 @@ async def list_buildings(user_id: str = Query(...)):
     cursor = db["ShelterTest"].find({"registrationStatus": {"$exists": True}})
     buildings = []
     async for doc in cursor:
+        manager_id   = doc.get("managerUserId", "")
+        manager_name = ""
+        if manager_id:
+            try:
+                manager = await db["User"].find_one({"_id": ObjectId(manager_id)})
+                if manager:
+                    first = manager.get("firstName", "")
+                    last  = manager.get("lastName", "")
+                    manager_name = f"{first} {last}".strip()
+            except Exception:
+                pass
+
         buildings.append({
-            "id":                    str(doc["_id"]),
-            "address":               doc.get("address", ""),
-            "city":                  doc.get("city", ""),
-            "registrationStatus":    doc.get("registrationStatus", "pending"),
-            "entranceCode":          doc.get("entranceCode", ""),
-            "managerUserId":         doc.get("managerUserId", ""),
-            "registrationFileName":  doc.get("registrationFileName"),
+            "id":                     str(doc["_id"]),
+            "address":                doc.get("address", ""),
+            "city":                   doc.get("city", ""),
+            "registrationStatus":     doc.get("registrationStatus", "pending"),
+            "entranceCode":           doc.get("entranceCode", ""),
+            "managerUserId":          manager_id,
+            "managerName":            manager_name,
+            "registrationFileName":   doc.get("registrationFileName"),
             "registrationFileBase64": doc.get("registrationFileBase64"),
         })
     return {"buildings": buildings}
