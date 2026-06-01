@@ -23,9 +23,26 @@ import { useAuth } from '@/context/auth';
 // changes register immediately even when the user is sitting still.
 export const GEOFENCE_SETTINGS_CHANGED_EVENT = 'geofence:settings-changed';
 
+// Fired from the map's SimJoystick (debug movement). Payload is the
+// simulated lat/lng — or `null` when sim mode is turned off, signaling
+// the hook to resume using the real GPS. While a non-null sim payload
+// is active, the watchPositionAsync + periodic poll handlers ignore
+// real GPS readings so the simulation owns the geofence check.
+export const GEOFENCE_SIM_POSITION_EVENT = 'geofence:sim-position';
+export type GeofenceSimPayload = { lat: number; lng: number } | null;
+
+// Fired from the Settings screen when the user toggles the "accessible
+// shelter only" preference. The map listens and updates its filter
+// immediately so the change applies without remounting the screen.
+export const ACCESSIBILITY_SETTINGS_CHANGED_EVENT = 'accessibility:settings-changed';
+
 const DEFAULT_RADIUS_METERS = 500;
 const MIN_DISTANCE_METERS = 25;
 const MIN_INTERVAL_MS = 10_000;
+// Belt-and-suspenders: even if the user is barely moving (so the
+// distance-based watcher doesn't fire), re-check every this long so
+// slow drift across the boundary still surfaces a notification.
+const POLL_INTERVAL_MS = 15_000;
 
 type GeofenceState = 'inside' | 'outside';
 
@@ -189,9 +206,14 @@ export function useHomeGeofence() {
   const { user } = useAuth();
   const userId = user?.id;
   const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Reset on every fresh hook arm so the user gets a status banner the
   // first time location resolves in a session, regardless of stored state.
   const firstReadingFiredRef = useRef(false);
+  // While the SimJoystick is active, this holds the simulated coords and
+  // the GPS-based handlers skip their readings so the simulation owns
+  // the geofence check.
+  const simCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
 
   useEffect(() => {
     if (!userId) return;
@@ -199,10 +221,39 @@ export function useHomeGeofence() {
     let cancelled = false;
     const stateKey = `geofence:lastState:${userId}`;
 
+    const checkOnce = async () => {
+      // If sim mode is active, use the simulated coords directly and
+      // don't poll real GPS — that would override the simulation.
+      if (simCoordsRef.current) {
+        await evaluateAndMaybeNotify(
+          userId,
+          simCoordsRef.current,
+          stateKey,
+          firstReadingFiredRef,
+        );
+        return;
+      }
+      try {
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        await evaluateAndMaybeNotify(
+          userId,
+          loc.coords,
+          stateKey,
+          firstReadingFiredRef,
+        );
+      } catch (e) {
+        console.log('[geofence] one-shot check failed:', e);
+      }
+    };
+
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted' || cancelled) return;
 
+      // 1) Movement-based watcher — fires the moment the user moves
+      //    more than MIN_DISTANCE_METERS. Skipped while sim mode is on.
       subscriptionRef.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.Balanced,
@@ -210,6 +261,7 @@ export function useHomeGeofence() {
           timeInterval: MIN_INTERVAL_MS,
         },
         async (loc) => {
+          if (simCoordsRef.current) return;
           await evaluateAndMaybeNotify(
             userId,
             loc.coords,
@@ -218,25 +270,42 @@ export function useHomeGeofence() {
           );
         },
       );
+
+      // 2) Periodic re-check — catches slow drift, GPS jitter near
+      //    the boundary, or stationary edge cases where the watcher
+      //    never fires. Runs alongside the movement watcher.
+      pollTimerRef.current = setInterval(() => {
+        if (!cancelled) checkOnce();
+      }, POLL_INTERVAL_MS);
     })();
 
-    // Settings save → re-evaluate without waiting for movement.
-    const sub = DeviceEventEmitter.addListener(
+    // 3) Settings save → re-evaluate without waiting for movement.
+    const settingsSub = DeviceEventEmitter.addListener(
       GEOFENCE_SETTINGS_CHANGED_EVENT,
-      async () => {
-        try {
-          const loc = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
-          await evaluateAndMaybeNotify(
-            userId,
-            loc.coords,
-            stateKey,
-            firstReadingFiredRef,
-          );
-        } catch (e) {
-          console.log('[geofence] settings-changed handler failed:', e);
+      checkOnce,
+    );
+
+    // 4) SimJoystick movement → use the simulated coords for the check
+    //    and arrest the GPS-based handlers until sim mode is released.
+    const simSub = DeviceEventEmitter.addListener(
+      GEOFENCE_SIM_POSITION_EVENT,
+      async (payload: GeofenceSimPayload) => {
+        if (payload === null) {
+          // Sim mode turned off → resume real GPS on the next tick.
+          simCoordsRef.current = null;
+          checkOnce();
+          return;
         }
+        simCoordsRef.current = {
+          latitude: payload.lat,
+          longitude: payload.lng,
+        };
+        await evaluateAndMaybeNotify(
+          userId,
+          simCoordsRef.current,
+          stateKey,
+          firstReadingFiredRef,
+        );
       },
     );
 
@@ -244,7 +313,12 @@ export function useHomeGeofence() {
       cancelled = true;
       subscriptionRef.current?.remove();
       subscriptionRef.current = null;
-      sub.remove();
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      settingsSub.remove();
+      simSub.remove();
     };
   }, [userId]);
 }

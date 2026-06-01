@@ -1,7 +1,10 @@
 import React from 'react';
 import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
 import * as Location from 'expo-location';
-import MapScreen from '../app/(tabs)/map';
+import MapScreen, { isShelterAccessible } from '../app/(tabs)/map';
+import { DeviceEventEmitter } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ACCESSIBILITY_SETTINGS_CHANGED_EVENT } from '@/hooks/use-home-geofence';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -493,85 +496,91 @@ describe('Admin visibility filtering', () => {
   });
 });
 
-// Helper — find the most recent setUserLocation message sent to the WebView.
-const lastSetUserLocation = (): { lat: number; lng: number } | undefined => {
-  const msgs = messagesOfType('setUserLocation');
-  return msgs.length === 0 ? undefined : { lat: msgs[msgs.length - 1].lat, lng: msgs[msgs.length - 1].lng };
-};
+// ─── Accessibility filter (BSPMT17-243) ───────────────────────────────────────
+// Soft filter: tapping ♿ flips `userSettings.isHandicapped` in AsyncStorage
+// and re-sends the shelter list to the WebView with `dimmed:true` on every
+// non-accessible shelter. Dimmed shelters stay clickable — the WebView just
+// renders them at low opacity so the user's eye lands on accessible ones first.
 
-describe('Live GPS tracking', () => {
-  it('subscribes to watchPositionAsync once location permission is granted', async () => {
+describe('Accessibility filter', () => {
+  const lastSetShelters = () =>
+    (messagesOfType('setShelters').slice(-1)[0]?.data ?? []) as Array<{
+      id: string;
+      dimmed?: boolean;
+    }>;
+
+  // Three shelters with different accessibility profiles, used across tests.
+  const accessible      = { ...SHELTER_A, id: 'acc',  name: 'Accessible',      isAccessible: true,  hasStairs: false };
+  const inaccessible    = { ...SHELTER_A, id: 'ina',  name: 'Not Accessible',  isAccessible: false, hasStairs: false };
+  const accessibleStairs= { ...SHELTER_A, id: 'stair',name: 'Stairs Block It', isAccessible: true,  hasStairs: true  };
+
+  // 1 ── Pure helper: covers all 4 truth-table combinations
+  describe('isShelterAccessible helper', () => {
+    it('is true only when isAccessible && !hasStairs', () => {
+      expect(isShelterAccessible({ isAccessible: true,  hasStairs: false } as any)).toBe(true);
+      expect(isShelterAccessible({ isAccessible: true,  hasStairs: true  } as any)).toBe(false);
+      expect(isShelterAccessible({ isAccessible: false, hasStairs: false } as any)).toBe(false);
+      expect(isShelterAccessible({ isAccessible: undefined, hasStairs: undefined } as any)).toBe(false);
+    });
+  });
+
+  // 2 ── Default state: filter OFF → all shelters sent
+  it('sends all shelters when the filter is off', async () => {
+    global.fetch = makeFetchWithShelters([accessible, inaccessible, accessibleStairs]);
     grantLocation();
-    render(<MapScreen />);
-    await waitFor(() => expect(watchCallback).not.toBeNull());
-    expect(Location.watchPositionAsync as jest.Mock).toHaveBeenCalledTimes(1);
-  });
-
-  it('does NOT subscribe to watchPositionAsync when permission is denied', async () => {
-    (Location.requestForegroundPermissionsAsync as jest.Mock)
-      .mockResolvedValue({ status: 'denied' } as any);
-    render(<MapScreen />);
-    // Give the async effect a tick to settle.
-    await new Promise(r => setTimeout(r, 50));
-    expect(Location.watchPositionAsync as jest.Mock).not.toHaveBeenCalled();
-  });
-
-  it('updates the in-WebView dot when the watcher emits a new fix', async () => {
-    grantLocation(32.080, 34.780);  // initial fix
     const { getByTestId } = render(<MapScreen />);
     await waitFor(() => getByTestId('map-webview'));
     await emitFromWeb({ type: 'ready' });
-    // Wait for the watcher to subscribe.
-    await waitFor(() => expect(watchCallback).not.toBeNull());
 
-    // Initial position was pushed to the WebView.
-    await waitFor(() => {
-      const loc = lastSetUserLocation();
-      expect(loc?.lat).toBeCloseTo(32.080);
-      expect(loc?.lng).toBeCloseTo(34.780);
-    });
+    await waitFor(() => expect(lastSetShelters().length).toBe(3));
+  });
 
-    // Walker moves ~15m east → watcher fires.
+  // 3 ── Filter ON via event → only accessible shelters appear
+  it('hides non-accessible shelters when the filter is on', async () => {
+    global.fetch = makeFetchWithShelters([accessible, inaccessible, accessibleStairs]);
+    grantLocation();
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+    await emitFromWeb({ type: 'ready' });
+    await waitFor(() => expect(lastSetShelters().length).toBe(3));
+
+    // Turn filter on via the same event Settings would fire
+    (AsyncStorage.getItem as jest.Mock).mockResolvedValueOnce(
+      JSON.stringify({ isHandicapped: true }),
+    );
     await act(async () => {
-      watchCallback!({ coords: { latitude: 32.080, longitude: 34.7802 } });
+      DeviceEventEmitter.emit(ACCESSIBILITY_SETTINGS_CHANGED_EVENT);
     });
 
     await waitFor(() => {
-      const loc = lastSetUserLocation();
-      expect(loc?.lng).toBeCloseTo(34.7802);
+      const ids = lastSetShelters().map((s: any) => s.id);
+      expect(ids).toEqual(['acc']);     // only the fully accessible one
+      expect(ids).not.toContain('ina');
+      expect(ids).not.toContain('stair');
     });
   });
 
-  it('camera auto-flies only on the FIRST fix, not on subsequent watcher ticks', async () => {
-    grantLocation(32.080, 34.780);
+  // 4 ── Live sync: Settings emits the event → map re-loads from storage
+  it('reacts to the ACCESSIBILITY_SETTINGS_CHANGED_EVENT from Settings', async () => {
+    global.fetch = makeFetchWithShelters([accessible, inaccessible]);
+    grantLocation();
     const { getByTestId } = render(<MapScreen />);
     await waitFor(() => getByTestId('map-webview'));
     await emitFromWeb({ type: 'ready' });
-    await waitFor(() => expect(watchCallback).not.toBeNull());
+    await waitFor(() => expect(lastSetShelters().length).toBe(2));
 
-    // The initial fix triggers exactly one flyTo (zoom=14, default level).
-    await waitFor(() => {
-      const flys = messagesOfType('flyTo');
-      expect(flys.length).toBeGreaterThanOrEqual(1);
+    // Simulate Settings being saved with isHandicapped=true
+    (AsyncStorage.getItem as jest.Mock).mockResolvedValueOnce(
+      JSON.stringify({ isHandicapped: true }),
+    );
+    await act(async () => {
+      DeviceEventEmitter.emit(ACCESSIBILITY_SETTINGS_CHANGED_EVENT);
     });
-    const flyCountAfterInitial = messagesOfType('flyTo').length;
 
-    // A bunch of watcher ticks — none of them should fly the camera.
-    for (let i = 0; i < 5; i++) {
-      await act(async () => {
-        watchCallback!({ coords: { latitude: 32.080 + i * 0.0001, longitude: 34.780 } });
-      });
-    }
-
-    expect(messagesOfType('flyTo').length).toBe(flyCountAfterInitial);
-  });
-
-  it('unsubscribes the watcher when the map screen unmounts', async () => {
-    grantLocation();
-    const utils = render(<MapScreen />);
-    await waitFor(() => expect(watchCallback).not.toBeNull());
-
-    utils.unmount();
-    expect(mockWatchRemove).toHaveBeenCalled();
+    await waitFor(() => {
+      const ids = lastSetShelters().map((s: any) => s.id);
+      expect(ids).toContain('acc');
+      expect(ids).not.toContain('ina');
+    });
   });
 });

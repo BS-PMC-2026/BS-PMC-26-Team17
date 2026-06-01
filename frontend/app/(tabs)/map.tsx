@@ -23,7 +23,11 @@ import AlertInjectModal from "@/components/AlertInjectModal";
 import NearbyShelterSheet from "@/components/NearbyShelterSheet";
 import SirenModeSheet, { type SettingsMode } from "@/components/SirenModeSheet";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
-import { GEOFENCE_SETTINGS_CHANGED_EVENT } from "@/hooks/use-home-geofence";
+import {
+  GEOFENCE_SETTINGS_CHANGED_EVENT,
+  GEOFENCE_SIM_POSITION_EVENT,
+  ACCESSIBILITY_SETTINGS_CHANGED_EVENT,
+} from "@/hooks/use-home-geofence";
 import { NavigationService } from "@/services/NavigationService";
 import { ReservationService, type AlertKind } from "@/services/ReservationService";
 
@@ -85,6 +89,14 @@ function shelterParams(s: ShelterPin): string {
   add('lastReportAt', s.lastReportAt);
   add('lastReportType', s.lastReportType);
   return parts.join('&');
+}
+
+// Mobility-impaired users opt into "accessible only" mode. A shelter is
+// considered accessible when it's marked accessible AND has no stairs.
+// Undefined fields are treated as "not accessible" (conservative — we'd
+// rather over-dim than mislead someone with limited mobility).
+export function isShelterAccessible(s: ShelterPin): boolean {
+  return s.isAccessible === true && s.hasStairs !== true;
 }
 
 export function getShelterColor(shelter: ShelterPin): string {
@@ -269,17 +281,43 @@ export default function MapScreen() {
   // We use this to re-evaluate `userZone` once the data is available.
   const [polygonsReady, setPolygonsReady] = useState(false);
 
+  // Accessibility filter — when ON, non-accessible shelters render dimmed
+  // (still on the map, still clickable, just visually de-emphasized so the
+  // user's eye lands on the ones that match their needs). Mirrored to
+  // `userSettings.isHandicapped` in AsyncStorage so the same flag drives
+  // both this toggle and the Settings screen Switch.
+  const [accessibleOnly, setAccessibleOnly] = useState(false);
+
   // ─── SimJoystick state — fake GPS for demos / QA ─────────────────────────
   const [simOn, setSimOn]         = useState(false);
   const [simCoords, setSimCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const moveIntent = useRef({ dx: 0, dy: 0 });
   const lastMoveAt = useRef(0);
 
-  // Subscribe to alerts (polling oref.org.il every 3s) for the lifetime of
-  // the map screen. The same hook also receives manual injections fired by
-  // the demo modal — both paths funnel into `setActiveAlert`.
+  // Holds the latest userZone without creating a stale closure inside the
+  // alert subscription. Updated synchronously in a separate effect below
+  // (after userZone is declared via useMemo further down the file).
+  const userZoneRef = useRef<string>('באר שבע');
+
+  // Subscribe to alerts (polling oref.org.il every 3s) and filter to only
+  // show alerts relevant to the user's current zone.
+  // Manual injections (isManual: true) always show — they're already fired
+  // with the correct zone from the demo modal.
+  // Real alerts are shown only if `alert.areas` contains the user's zone.
+  // When userZone is the generic fallback "באר שבע" we match any sub-zone
+  // (e.g. "באר שבע - מזרח") because we don't know the exact district.
   useEffect(() => {
-    return AlertsService.subscribe(setActiveAlert);
+    return AlertsService.subscribe((alert) => {
+      if (alert.isManual) {
+        setActiveAlert(alert);
+        return;
+      }
+      const zone = userZoneRef.current;
+      const matches =
+        alert.areas.includes(zone) ||
+        (zone === 'באר שבע' && alert.areas.some(a => a.startsWith('באר שבע')));
+      if (matches) setActiveAlert(alert);
+    });
   }, []);
 
   // Load the official Pikud HaOref polygons once. `OrefZonesService.load`
@@ -287,6 +325,35 @@ export default function MapScreen() {
   useEffect(() => {
     OrefZonesService.load().then(() => setPolygonsReady(true));
   }, []);
+
+  // ── Accessibility filter — load + sync ──────────────────────────────────
+  // Initial load + re-load every time the screen regains focus, so changes
+  // made on the Settings screen show up when the user comes back.
+  useFocusEffect(useCallback(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('userSettings');
+        if (!raw) return;
+        setAccessibleOnly(!!JSON.parse(raw).isHandicapped);
+      } catch {
+        // Bad JSON in storage — silently ignore, default stays false
+      }
+    })();
+  }, []));
+
+  // Live reload — Settings emits this event right after a successful save,
+  // so if the user changes the Switch while the map is mounted (e.g. via
+  // back-navigation that doesn't re-focus), the toggle still flips.
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(ACCESSIBILITY_SETTINGS_CHANGED_EVENT, () => {
+      AsyncStorage.getItem('userSettings').then(raw => {
+        if (!raw) return;
+        try { setAccessibleOnly(!!JSON.parse(raw).isHandicapped); } catch {}
+      });
+    });
+    return () => sub.remove();
+  }, []);
+
 
   // Resolve the user's Pikud HaOref zone. Order of preference:
   //   1. The official polygon containing the user's coordinates.
@@ -317,6 +384,9 @@ export default function MapScreen() {
     return best ?? 'באר שבע';
   }, [simOn, simCoords, userLocation, shelterPins, polygonsReady]);
 
+  // Keep the ref in sync so the alert subscription closure always reads the
+  // latest zone without needing to re-subscribe on every GPS update.
+  useEffect(() => { userZoneRef.current = userZone; }, [userZone]);
 
   // Helper — send a JSON message into the WebView
   const sendToWeb = useCallback((obj: any) => {
@@ -675,11 +745,19 @@ export default function MapScreen() {
 
   useEffect(() => {
     if (!webReady || shelterPins.length === 0) return;
-    const data = shelterPins.map(s => ({
-      id: s.id, lat: s.latitude, lng: s.longitude, color: getShelterColor(s),
-    }));
+    // Hard accessibility filter — when the user has "Mobility Impaired" on in
+    // Settings, only shelters that are both marked accessible AND have no stairs
+    // are sent to the WebView. Non-accessible shelters are hidden entirely.
+    const data = shelterPins
+      .filter(s => !accessibleOnly || isShelterAccessible(s))
+      .map(s => ({
+        id: s.id,
+        lat: s.latitude,
+        lng: s.longitude,
+        color: getShelterColor(s),
+      }));
     sendToWeb({ type: 'setShelters', data });
-  }, [webReady, shelterPins, sendToWeb]);
+  }, [webReady, shelterPins, accessibleOnly, sendToWeb]);
 
   // Push every fresh GPS fix into the WebView so the blue dot moves with
   // the user. The camera only auto-flies once — on the first fix — so the
@@ -805,6 +883,20 @@ export default function MapScreen() {
     sendToWeb({ type: 'setUserLocation', lat: simCoords.latitude, lng: simCoords.longitude });
     sendToWeb({ type: 'flyTo', lat: simCoords.latitude, lng: simCoords.longitude, zoom: 16, duration: 0 });
   }, [simOn, simCoords, webReady, sendToWeb]);
+
+  // Push the simulated coords to the geofence hook so the "outside
+  // radius" check honors the joystick instead of the real GPS. When
+  // sim mode is turned off, emit null so the hook resumes real GPS.
+  useEffect(() => {
+    if (simOn && simCoords) {
+      DeviceEventEmitter.emit(GEOFENCE_SIM_POSITION_EVENT, {
+        lat: simCoords.latitude,
+        lng: simCoords.longitude,
+      });
+    } else if (!simOn) {
+      DeviceEventEmitter.emit(GEOFENCE_SIM_POSITION_EVENT, null);
+    }
+  }, [simOn, simCoords]);
 
   const toggleSim = () => {
     if (simOn) {
@@ -1048,6 +1140,16 @@ export default function MapScreen() {
         <Text style={styles.chatFabIcon}>💬</Text>
       </TouchableOpacity>
 
+      {/* 🆘 emergency contacts — Israeli emergency / mental-health lines. */}
+      <TouchableOpacity
+        style={styles.sosFab}
+        onPress={() => router.push('/emergency-contacts' as any)}
+        testID="sos-fab"
+        accessibilityLabel="Open emergency contacts"
+      >
+        <Text style={styles.sosFabIcon}>🆘</Text>
+      </TouchableOpacity>
+
       {/* Location button */}
       {locationGranted && (
         <TouchableOpacity
@@ -1248,6 +1350,26 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   chatFabIcon: { fontSize: 20 },
+
+  // 🆘 emergency contacts — stacked under the 💬 chat button.
+  sosFab: {
+    position: 'absolute',
+    top: 222,
+    left: 12,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 10,
+  },
+  sosFabIcon: { fontSize: 20 },
 
   locationButton: {
     position: "absolute",
