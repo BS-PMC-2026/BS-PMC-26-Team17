@@ -31,6 +31,11 @@ export const GEOFENCE_SETTINGS_CHANGED_EVENT = 'geofence:settings-changed';
 export const GEOFENCE_SIM_POSITION_EVENT = 'geofence:sim-position';
 export type GeofenceSimPayload = { lat: number; lng: number } | null;
 
+// Fired from the Settings screen when the user toggles the "accessible
+// shelter only" preference. The map listens and updates its filter
+// immediately so the change applies without remounting the screen.
+export const ACCESSIBILITY_SETTINGS_CHANGED_EVENT = 'accessibility:settings-changed';
+
 const DEFAULT_RADIUS_METERS = 500;
 const MIN_DISTANCE_METERS = 25;
 const MIN_INTERVAL_MS = 10_000;

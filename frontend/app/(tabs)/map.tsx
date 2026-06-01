@@ -26,6 +26,7 @@ import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
 import {
   GEOFENCE_SETTINGS_CHANGED_EVENT,
   GEOFENCE_SIM_POSITION_EVENT,
+  ACCESSIBILITY_SETTINGS_CHANGED_EVENT,
 } from "@/hooks/use-home-geofence";
 import { NavigationService } from "@/services/NavigationService";
 
