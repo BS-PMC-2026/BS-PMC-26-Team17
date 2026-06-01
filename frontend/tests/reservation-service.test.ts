@@ -131,3 +131,43 @@ describe('ReservationService.release', () => {
     ).rejects.toThrow(/404/);
   });
 });
+
+describe('ReservationService.arrive', () => {
+  it('POSTs to /shelters/{id}/arrive with snake_case body and returns the new counters', async () => {
+    const expected = {
+      shelter_id: 's1', promoted: true,
+      reservedPlaces: 0, actualOccupancy: 3, capacity: 10, isFull: false,
+    };
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(expected),
+        text: () => Promise.resolve(''),
+      } as unknown as Response),
+    ) as jest.Mock;
+
+    const result = await ReservationService.arrive({
+      shelterId: 's1', userId: 'u1', alertId: 'a1',
+    });
+
+    expect(result).toEqual(expected);
+    const [url, opts] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe('http://api.test/shelters/s1/arrive');
+    expect(opts.method).toBe('POST');
+    expect(JSON.parse(opts.body)).toEqual({ user_id: 'u1', alert_id: 'a1' });
+  });
+
+  it('rejects when the backend returns a non-2xx status', async () => {
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: false, status: 500,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve('boom'),
+      } as unknown as Response),
+    ) as jest.Mock;
+
+    await expect(
+      ReservationService.arrive({ shelterId: 's1', userId: 'u1', alertId: 'a1' }),
+    ).rejects.toThrow(/500/);
+  });
+});

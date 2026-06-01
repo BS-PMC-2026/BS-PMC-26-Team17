@@ -57,7 +57,19 @@ class ShelterReservation(Document):
       - auditable: we know who reserved where during which event
 
     Lifecycle:
+      created                              → reservedPlaces +groupSize
+        ↓ (within 10m of shelter, /arrive)
+      arrived                              → reservedPlaces -groupSize, actualOccupancy +groupSize
+        ↓ (after expiresAt, sweeper)
+      rolledBack                           → actualOccupancy -groupSize
+
+      OR (if user never arrives):
       created → (sweeper after expiresAt) → rolledBack
+                                           → reservedPlaces -groupSize
+
+      OR (if user cancels before arriving):
+      created → (POST /release)            → rolledBack
+                                           → reservedPlaces -groupSize
     """
     shelterId  = StringField(required=True)
     userId     = StringField(required=True)
@@ -68,6 +80,11 @@ class ShelterReservation(Document):
     createdAt  = DateTimeField(required=True)
     expiresAt  = DateTimeField(required=True)        # createdAt + TTL window
     rolledBack = BooleanField(default=False)
+    # Set when the user physically arrives at the shelter (within 10m).
+    # While `arrived==True`, the sweeper decrements actualOccupancy
+    # instead of reservedPlaces when the row expires.
+    arrived    = BooleanField(default=False)
+    arrivedAt  = DateTimeField(default=None)
 
     meta = {
         "collection": "ShelterReservation",

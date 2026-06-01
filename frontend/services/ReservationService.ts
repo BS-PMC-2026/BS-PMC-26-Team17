@@ -46,6 +46,21 @@ export interface ReleaseResult {
   isFull:           boolean;
 }
 
+export interface ArriveParams {
+  shelterId: string;
+  userId:    string;
+  alertId:   string;
+}
+
+export interface ArriveResult {
+  shelter_id:       string;
+  promoted:         boolean;
+  reservedPlaces:   number;
+  actualOccupancy:  number;
+  capacity:         number;
+  isFull:           boolean;
+}
+
 export class ReservationService {
   /**
    * Create or update a reservation. Returns the shelter's post-update
@@ -98,6 +113,33 @@ export class ReservationService {
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`release failed: ${res.status} ${text}`);
+    }
+
+    return res.json();
+  }
+
+  /**
+   * Promote a reservation from "reserved" → "arrived" when the user is
+   * physically at the shelter (within 10m, judged client-side via the
+   * navigate screen's GPS watcher). Server-side idempotent: a second call
+   * returns `promoted: false` without further state change.
+   */
+  static async arrive(p: ArriveParams): Promise<ArriveResult> {
+    const apiUrl = process.env.EXPO_PUBLIC_API_URL;
+    if (!apiUrl) throw new Error('EXPO_PUBLIC_API_URL is not set');
+
+    const res = await fetch(`${apiUrl}/shelters/${p.shelterId}/arrive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id:  p.userId,
+        alert_id: p.alertId,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`arrive failed: ${res.status} ${text}`);
     }
 
     return res.json();

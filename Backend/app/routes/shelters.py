@@ -110,6 +110,10 @@ router = APIRouter(prefix="/shelters", tags=["ShelterTest"])
 # decay sweeper (app/core/reservations.py) rolls them back. Tuned to the
 # rough lifetime of an active alert event.
 RESERVATION_TTL_MINUTES = 30
+# After a user arrives at the shelter, they stay counted in
+# actualOccupancy for this long. Matches the reservation window so the
+# accounting feels symmetric — adjust independently if needed.
+ARRIVED_TTL_MINUTES = 30
 
 
 async def _is_admin(user_id: str) -> bool:
@@ -386,10 +390,13 @@ class ShelterReleaseBody(BaseModel):
 @router.post("/{shelter_id}/release")
 async def release_shelter(shelter_id: str, body: ShelterReleaseBody):
     """
-    Cancel an active reservation, decrementing the shelter's
-    `reservedPlaces` by the reservation's groupSize. Used when the user
-    backs out of /navigate — we don't want them counted for the full
-    30-minute TTL window if they're not actually going anymore.
+    Cancel an active (not-yet-arrived) reservation, decrementing the
+    shelter's `reservedPlaces` by the reservation's groupSize. Used when
+    the user backs out of /navigate — we don't want them counted for the
+    full 30-minute TTL window if they're not actually going anymore.
+
+    Arrived reservations are NOT affected — the user is physically there,
+    so unmount-style triggers shouldn't undo their presence.
 
     Idempotent: if there's no active reservation, returns the shelter's
     current state without changing anything (and a 200, not 404 — the
@@ -404,15 +411,16 @@ async def release_shelter(shelter_id: str, body: ShelterReleaseBody):
     if not shelter:
         raise HTTPException(status_code=404, detail="Shelter not found")
 
-    # Atomically claim the row so a concurrent release / sweeper pass
-    # can't double-decrement. update_one returns modified_count=0 if
-    # there's nothing matching `rolledBack: false` — that's the no-op path.
+    # Atomically claim the row — filter excludes arrived rows so /release
+    # can never undo a real arrival, and `rolledBack: false` prevents a
+    # double-decrement race with the sweeper or a concurrent release.
     existing = await db["ShelterReservation"].find_one_and_update(
         {
             "userId":     body.user_id,
             "shelterId":  shelter_id,
             "alertId":    body.alert_id,
             "rolledBack": False,
+            "arrived":    {"$ne": True},
         },
         {"$set": {"rolledBack": True}},
     )
@@ -442,6 +450,94 @@ async def release_shelter(shelter_id: str, body: ShelterReleaseBody):
     return {
         "shelter_id":      shelter_id,
         "released":        released,
+        "reservedPlaces":  reserved,
+        "actualOccupancy": actual,
+        "capacity":        capacity,
+        "isFull":          is_full,
+    }
+
+
+class ShelterArriveBody(BaseModel):
+    """Body for POST /shelters/{id}/arrive."""
+    user_id:  str
+    alert_id: str
+
+
+@router.post("/{shelter_id}/arrive")
+async def arrive_at_shelter(shelter_id: str, body: ShelterArriveBody):
+    """
+    Promote an active reservation from "reserved" → "arrived" once the
+    user is physically at the shelter (within 10m, judged client-side).
+
+    Counter effects:
+      - reservedPlaces -= groupSize
+      - actualOccupancy += groupSize
+    plus on the reservation row: arrived=True, arrivedAt=now, and
+    expiresAt is extended by ARRIVED_TTL_MINUTES so the sweeper doesn't
+    immediately decrement actualOccupancy.
+
+    Idempotent: if there's no active reservation (already arrived,
+    rolled back, or never existed), returns the shelter's current
+    state without changing anything.
+    """
+    try:
+        shelter_oid = ObjectId(shelter_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid shelter id")
+
+    shelter = await db["ShelterTest"].find_one({"_id": shelter_oid})
+    if not shelter:
+        raise HTTPException(status_code=404, detail="Shelter not found")
+
+    now = datetime.now(timezone.utc)
+    arrived_expires_at = now + timedelta(minutes=ARRIVED_TTL_MINUTES)
+
+    # Atomic claim — only flips to arrived if the row exists, is active
+    # (not rolled back), and hasn't already arrived. This prevents
+    # double-promotion if the geofence trips twice in rapid succession.
+    existing = await db["ShelterReservation"].find_one_and_update(
+        {
+            "userId":     body.user_id,
+            "shelterId":  shelter_id,
+            "alertId":    body.alert_id,
+            "rolledBack": False,
+            "arrived":    {"$ne": True},
+        },
+        {"$set": {
+            "arrived":   True,
+            "arrivedAt": now,
+            "expiresAt": arrived_expires_at,
+        }},
+    )
+
+    promoted = False
+    if existing:
+        group_size = int(existing.get("groupSize", 0) or 0)
+        if group_size > 0:
+            await db["ShelterTest"].update_one(
+                {"_id": shelter_oid},
+                {"$inc": {
+                    "reservedPlaces":  -group_size,
+                    "actualOccupancy": +group_size,
+                }},
+            )
+            promoted = True
+
+    # Re-read for post-update counters, then recompute isFull.
+    shelter = await db["ShelterTest"].find_one({"_id": shelter_oid}) or {}
+    capacity = int(shelter.get("capacity", 0) or 0)
+    reserved = int(shelter.get("reservedPlaces", 0) or 0)
+    actual   = int(shelter.get("actualOccupancy", 0) or 0)
+    is_full  = _derive_is_full(actual, reserved, capacity)
+    if bool(shelter.get("isFull", False)) != is_full:
+        await db["ShelterTest"].update_one(
+            {"_id": shelter_oid},
+            {"$set": {"isFull": is_full}},
+        )
+
+    return {
+        "shelter_id":      shelter_id,
+        "promoted":        promoted,
         "reservedPlaces":  reserved,
         "actualOccupancy": actual,
         "capacity":        capacity,

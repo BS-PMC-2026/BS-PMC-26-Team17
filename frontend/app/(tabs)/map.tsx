@@ -458,15 +458,40 @@ export default function MapScreen() {
   }, [activeAlert]);
 
   // Pre-alarm sheet → user picked a shelter + group size. POST the
-  // reservation (best-effort) and then navigate the regular (non-emergency)
-  // way so the user still gets to choose transport mode.
+  // reservation (best-effort), then push directly to /navigate with
+  // reservation context (alertId / shelterId / initialGroupSize) so the
+  // navigate screen can detect arrival and release-on-back correctly.
+  //
+  // We bypass the shelter-details interstitial here on purpose: during an
+  // active alert the user already picked the shelter from the list, and
+  // a detail screen between "tap" and "start route" adds friction. They
+  // still get the regular mode-select (no emergency=true) because pre-
+  // alarm is "head there soon", not "navigate now".
   const handleNearbyPick = useCallback((sh: { id: string }, groupSize: number) => {
     setNearbySheetOpen(false);
     const full = shelterPins.find(p => p.id === sh.id);
-    if (!full) return;
-    if (activeAlert) postReservation(full, activeAlert, groupSize);
-    openShelter(full);
-  }, [shelterPins, openShelter, activeAlert, postReservation]);
+    if (!full || !activeAlert) {
+      // No alert context (shouldn't happen — sheet only opens during an
+      // alert) — fall back to the regular shelter-details path.
+      if (full) openShelter(full);
+      return;
+    }
+    postReservation(full, activeAlert, groupSize);
+
+    const suffix = (!simOn || !simCoords)
+      ? ''
+      : `&fromLat=${simCoords.latitude}&fromLng=${simCoords.longitude}`;
+    const params =
+      `lat=${full.latitude}` +
+      `&lng=${full.longitude}` +
+      `&name=${encodeURIComponent(full.name || 'מקלט')}` +
+      `&alertId=${encodeURIComponent(activeAlert.id)}` +
+      `&alertKind=${activeAlert.kind}` +
+      `&shelterId=${encodeURIComponent(full.id)}` +
+      `&initialGroupSize=${groupSize}` +
+      suffix;
+    router.push(`/navigate?${params}` as any);
+  }, [shelterPins, openShelter, activeAlert, postReservation, simOn, simCoords]);
 
   // Siren sheet → user changed transport mode. Re-route to the same target.
   // skipPrompt=true so the SirenGroupPromptModal doesn't re-open on the
@@ -580,20 +605,70 @@ export default function MapScreen() {
     }, []),
   );
 
-  // Get user location once permission is granted
+  // ── Live GPS tracking ────────────────────────────────────────────────────
+  // 1) Request foreground permission + grab an initial fix so the dot and
+  //    the camera have somewhere to land.
+  // 2) Once granted, start a watchPositionAsync subscription that updates
+  //    `userLocation` every ~5m. The dot then follows the user as they walk
+  //    around with the app open; the camera does NOT chase them (that'd
+  //    hijack panning) — they tap 📍 to recenter, or open shelter-details
+  //    to navigate.
+  //
+  // The sim joystick (when toggled on) drives a separate fake position; we
+  // don't pause the real watcher because the sim only affects what we
+  // SEND to the WebView, not the real userLocation used by features like
+  // `findNearestUsableShelter` (which intentionally prefers simCoords too
+  // when sim is on — see that callback).
   useEffect(() => {
+    let cancelled = false;
+    let sub: Location.LocationSubscription | null = null;
+
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === "granted") {
-        const loc = await Location.getCurrentPositionAsync({});
-        setUserLocation({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        });
-        setLocationGranted(true);
+      if (status !== "granted") {
+        if (!cancelled) setLoading(false);
+        return;
       }
-      setLoading(false);
+      // Initial fix — feeds the marker and triggers the first camera fly.
+      try {
+        const loc = await Location.getCurrentPositionAsync({});
+        if (!cancelled) {
+          setUserLocation({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+          setLocationGranted(true);
+        }
+      } catch (e) {
+        console.warn('[map] initial GPS fix failed:', e);
+      }
+      if (!cancelled) setLoading(false);
+
+      // Live watcher — fires whenever the user moves at least ~5m.
+      // Accuracy.High matches navigate.tsx; battery cost is acceptable
+      // for an emergency app whose whole job is "where are you right now".
+      try {
+        sub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, distanceInterval: 5 },
+          (loc) => {
+            if (cancelled) return;
+            setUserLocation({
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+            });
+          },
+        );
+        if (cancelled) sub.remove();
+      } catch (e) {
+        console.warn('[map] watchPositionAsync failed:', e);
+      }
     })();
+
+    return () => {
+      cancelled = true;
+      sub?.remove();
+      sub = null;
+    };
   }, []);
 
   // ── Sync data → WebView whenever it (or the data) changes ─────────────
@@ -606,6 +681,10 @@ export default function MapScreen() {
     sendToWeb({ type: 'setShelters', data });
   }, [webReady, shelterPins, sendToWeb]);
 
+  // Push every fresh GPS fix into the WebView so the blue dot moves with
+  // the user. The camera only auto-flies once — on the first fix — so the
+  // watcher's ongoing updates don't hijack panning. Tap 📍 to recenter.
+  const didInitialFlyRef = useRef(false);
   useEffect(() => {
     if (!webReady || !userLocation) return;
     sendToWeb({
@@ -613,12 +692,15 @@ export default function MapScreen() {
       lat: userLocation.latitude,
       lng: userLocation.longitude,
     });
-    sendToWeb({
-      type: 'flyTo',
-      lat: userLocation.latitude,
-      lng: userLocation.longitude,
-      zoom: 14,
-    });
+    if (!didInitialFlyRef.current) {
+      didInitialFlyRef.current = true;
+      sendToWeb({
+        type: 'flyTo',
+        lat: userLocation.latitude,
+        lng: userLocation.longitude,
+        zoom: 14,
+      });
+    }
   }, [webReady, userLocation, sendToWeb]);
 
   useEffect(() => {

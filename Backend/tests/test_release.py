@@ -187,12 +187,24 @@ class FakeShelterCollection:
         return MagicMock(matched_count=1, modified_count=1)
 
 
+def _matches_filter(row, query):
+    """Apply the {$ne: ...} operator subset that release/arrive use."""
+    for k, v in query.items():
+        if isinstance(v, dict):
+            if "$ne" in v and row.get(k) == v["$ne"]:
+                return False
+        else:
+            if row.get(k) != v:
+                return False
+    return True
+
+
 class FakeReservationCollection:
     def __init__(self):
         self.rows = []
     async def find_one(self, query):
         for r in self.rows:
-            if all(r.get(k) == v for k, v in query.items()):
+            if _matches_filter(r, query):
                 return dict(r)
         return None
     async def insert_one(self, doc):
@@ -201,14 +213,14 @@ class FakeReservationCollection:
         return MagicMock(inserted_id=doc["_id"])
     async def update_one(self, query, update):
         for r in self.rows:
-            if all(r.get(k) == v for k, v in query.items()):
+            if _matches_filter(r, query):
                 if "$set" in update:
                     for k, v in update["$set"].items(): r[k] = v
                 return MagicMock(matched_count=1, modified_count=1)
         return MagicMock(matched_count=0, modified_count=0)
     async def find_one_and_update(self, query, update):
         for r in self.rows:
-            if all(r.get(k) == v for k, v in query.items()):
+            if _matches_filter(r, query):
                 before = dict(r)
                 if "$set" in update:
                     for k, v in update["$set"].items(): r[k] = v

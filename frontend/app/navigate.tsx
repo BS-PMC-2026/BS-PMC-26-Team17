@@ -181,6 +181,14 @@ export default function NavigateScreen() {
   const polylineRef    = useRef<Coord[]>([]);
   const modeRef        = useRef<Mode>(initialMode);
   const recalcCooldown = useRef(false);
+  // Set once the arrival POST succeeds — used to (a) skip duplicate
+  // /arrive calls if the geofence trips multiple times, and (b) suppress
+  // the unmount-release (the user is physically there; we don't want
+  // to undo their arrival).
+  const arrivedRef     = useRef(false);
+  // Guard against firing /arrive multiple times concurrently while the
+  // first request is in flight.
+  const arriveInFlight = useRef(false);
 
   const [phase, setPhase]               = useState<'select' | 'navigating'>(
     isEmergency ? 'navigating' : 'select'
@@ -237,12 +245,18 @@ export default function NavigateScreen() {
   //
   // Deps are all primitives (user?.id, not user) so React's render-time
   // reference equality doesn't fire the cleanup mid-render.
+  //
+  // Ungated from `isEmergency` — pre-alarm reservations should also
+  // release on back. Gated on `arrivedRef` instead: once the user has
+  // physically arrived, the row is in actualOccupancy land and /release
+  // is a no-op anyway, but skipping the call avoids a useless POST.
   const userId = user?.id;
   useEffect(() => {
-    if (!reservationReady || !isEmergency || !userId) return;
+    if (!reservationReady || !userId) return;
     const capturedShelterId = shelterId!;
     const capturedAlertId   = alertId!;
     return () => {
+      if (arrivedRef.current) return;
       // Fire and forget — we're tearing down; no way to surface errors.
       ReservationService.release({
         shelterId: capturedShelterId,
@@ -250,7 +264,28 @@ export default function NavigateScreen() {
         alertId:   capturedAlertId,
       }).catch((e) => console.warn('[nav] release on unmount failed:', e));
     };
-  }, [reservationReady, isEmergency, shelterId, alertId, userId]);
+  }, [reservationReady, shelterId, alertId, userId]);
+
+  // Try to promote the reservation to arrived if the user is within 10m
+  // of the destination. Called from advanceOnRoute on every GPS / sim tick.
+  // No-ops when reservation context is missing, the user has already
+  // arrived, or another POST is in flight.
+  const ARRIVAL_RADIUS_M = 10;
+  const tryArrive = useCallback((pos: Coord) => {
+    if (!reservationReady || !userId) return;
+    if (arrivedRef.current || arriveInFlight.current) return;
+    const dist = NavigationService.haversineM(pos, dest);
+    if (dist > ARRIVAL_RADIUS_M) return;
+    arriveInFlight.current = true;
+    ReservationService.arrive({
+      shelterId: shelterId!,
+      userId,
+      alertId:   alertId!,
+    })
+      .then(() => { arrivedRef.current = true; })
+      .catch((e) => console.warn('[nav] arrive failed:', e))
+      .finally(() => { arriveInFlight.current = false; });
+  }, [reservationReady, userId, shelterId, alertId, dest]);
 
   // Helper — send a JSON message into the WebView
   const sendToWeb = useCallback((obj: any) => {
@@ -475,6 +510,11 @@ export default function NavigateScreen() {
 
   // ─── Update step / remaining polyline / ETA on every GPS tick ───────────
   function advanceOnRoute(pos: Coord) {
+    // Arrival check: if the user is within 10m of the destination during
+    // an active alert reservation, promote the row to actualOccupancy.
+    // Idempotent — tryArrive itself guards against double-firing.
+    tryArrive(pos);
+
     if (stepsRef.current.length > 0) {
       setCurrentStep(NavigationService.nearestStepIndex(stepsRef.current, pos));
     }

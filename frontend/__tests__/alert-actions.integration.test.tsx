@@ -22,8 +22,12 @@ import MapScreen from '../app/(tabs)/map';
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  // Map screen also subscribes to live location updates — stub so it
+  // doesn't try to access a real GPS subscription during tests.
+  watchPositionAsync: jest.fn(() => Promise.resolve({ remove: jest.fn() })),
   reverseGeocodeAsync: jest.fn(() => Promise.resolve([])),
   geocodeAsync: jest.fn(() => Promise.resolve([])),
+  Accuracy: { High: 4, Balanced: 3 },
 }));
 
 jest.mock('expo-router', () => ({
@@ -69,10 +73,21 @@ const mockRelease: jest.Mock<Promise<any>, [any]> = jest.fn((_arg: any) =>
     isFull:          false,
   }),
 );
+const mockArrive: jest.Mock<Promise<any>, [any]> = jest.fn((_arg: any) =>
+  Promise.resolve({
+    shelter_id:      'near-1',
+    promoted:        true,
+    reservedPlaces:  0,
+    actualOccupancy: 1,
+    capacity:        10,
+    isFull:          false,
+  }),
+);
 jest.mock('@/services/ReservationService', () => ({
   ReservationService: {
     reserve: (arg: any) => mockReserve(arg),
     release: (arg: any) => mockRelease(arg),
+    arrive:  (arg: any) => mockArrive(arg),
   },
 }));
 
@@ -193,6 +208,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockReserve.mockClear();
   mockRelease.mockClear();
+  mockArrive.mockClear();
   alertListener = null;
   webOnMessage = null;
   // Run the focus effect inline — settings are loaded from AsyncStorage here.
@@ -294,7 +310,7 @@ describe('Alert actions on the map screen', () => {
     });
   });
 
-  it('pre-alarm shelter pick POSTs a reservation with the stepper count', async () => {
+  it('pre-alarm shelter pick POSTs a reservation AND pushes directly to /navigate with reservation context', async () => {
     setupStorage({ transportMode: 'walking' });
     const { getByTestId } = await renderMap();
 
@@ -315,6 +331,19 @@ describe('Alert actions on the map screen', () => {
         alertKind: 'early',
         groupSize: 3,
       });
+    });
+
+    // Pre-alarm now goes directly to /navigate (skips shelter-details)
+    // so the navigate screen can detect arrival and release-on-back.
+    // No emergency=true — user still picks transport mode normally.
+    await waitFor(() => {
+      const url = lastNavigatePush();
+      expect(url).not.toBeNull();
+      expect(url!).toContain('alertId=e1');
+      expect(url!).toContain('alertKind=early');
+      expect(url!).toContain('shelterId=far-1');
+      expect(url!).toContain('initialGroupSize=3');
+      expect(url!).not.toContain('emergency=true');
     });
   });
 

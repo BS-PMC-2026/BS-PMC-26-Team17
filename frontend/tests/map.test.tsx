@@ -5,11 +5,21 @@ import MapScreen from '../app/(tabs)/map';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+// Captured so tests can simulate the user moving (drives the live
+// watchPositionAsync subscription added to the map screen).
+let watchCallback: ((loc: any) => void) | null = null;
+const mockWatchRemove = jest.fn();
+
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  watchPositionAsync: jest.fn((_opts: any, cb: any) => {
+    watchCallback = cb;
+    return Promise.resolve({ remove: mockWatchRemove });
+  }),
   reverseGeocodeAsync: jest.fn(() => Promise.resolve([])),
   geocodeAsync: jest.fn(() => Promise.resolve([])),
+  Accuracy: { High: 4, Balanced: 3 },
 }));
 
 jest.mock('expo-router', () => ({
@@ -117,7 +127,9 @@ const SHELTER_A = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockPostMessage.mockClear();
+  mockWatchRemove.mockClear();
   webOnMessage = null;
+  watchCallback = null;
   global.fetch = jest.fn(() =>
     Promise.resolve({
       ok: true,
@@ -478,5 +490,88 @@ describe('Admin visibility filtering', () => {
     await emitFromWeb({ type: 'ready' });
 
     await waitFor(() => expect(lastSetShelters().length).toBe(2));
+  });
+});
+
+// Helper — find the most recent setUserLocation message sent to the WebView.
+const lastSetUserLocation = (): { lat: number; lng: number } | undefined => {
+  const msgs = messagesOfType('setUserLocation');
+  return msgs.length === 0 ? undefined : { lat: msgs[msgs.length - 1].lat, lng: msgs[msgs.length - 1].lng };
+};
+
+describe('Live GPS tracking', () => {
+  it('subscribes to watchPositionAsync once location permission is granted', async () => {
+    grantLocation();
+    render(<MapScreen />);
+    await waitFor(() => expect(watchCallback).not.toBeNull());
+    expect(Location.watchPositionAsync as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT subscribe to watchPositionAsync when permission is denied', async () => {
+    (Location.requestForegroundPermissionsAsync as jest.Mock)
+      .mockResolvedValue({ status: 'denied' } as any);
+    render(<MapScreen />);
+    // Give the async effect a tick to settle.
+    await new Promise(r => setTimeout(r, 50));
+    expect(Location.watchPositionAsync as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('updates the in-WebView dot when the watcher emits a new fix', async () => {
+    grantLocation(32.080, 34.780);  // initial fix
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+    await emitFromWeb({ type: 'ready' });
+    // Wait for the watcher to subscribe.
+    await waitFor(() => expect(watchCallback).not.toBeNull());
+
+    // Initial position was pushed to the WebView.
+    await waitFor(() => {
+      const loc = lastSetUserLocation();
+      expect(loc?.lat).toBeCloseTo(32.080);
+      expect(loc?.lng).toBeCloseTo(34.780);
+    });
+
+    // Walker moves ~15m east → watcher fires.
+    await act(async () => {
+      watchCallback!({ coords: { latitude: 32.080, longitude: 34.7802 } });
+    });
+
+    await waitFor(() => {
+      const loc = lastSetUserLocation();
+      expect(loc?.lng).toBeCloseTo(34.7802);
+    });
+  });
+
+  it('camera auto-flies only on the FIRST fix, not on subsequent watcher ticks', async () => {
+    grantLocation(32.080, 34.780);
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+    await emitFromWeb({ type: 'ready' });
+    await waitFor(() => expect(watchCallback).not.toBeNull());
+
+    // The initial fix triggers exactly one flyTo (zoom=14, default level).
+    await waitFor(() => {
+      const flys = messagesOfType('flyTo');
+      expect(flys.length).toBeGreaterThanOrEqual(1);
+    });
+    const flyCountAfterInitial = messagesOfType('flyTo').length;
+
+    // A bunch of watcher ticks — none of them should fly the camera.
+    for (let i = 0; i < 5; i++) {
+      await act(async () => {
+        watchCallback!({ coords: { latitude: 32.080 + i * 0.0001, longitude: 34.780 } });
+      });
+    }
+
+    expect(messagesOfType('flyTo').length).toBe(flyCountAfterInitial);
+  });
+
+  it('unsubscribes the watcher when the map screen unmounts', async () => {
+    grantLocation();
+    const utils = render(<MapScreen />);
+    await waitFor(() => expect(watchCallback).not.toBeNull());
+
+    utils.unmount();
+    expect(mockWatchRemove).toHaveBeenCalled();
   });
 });
