@@ -5,7 +5,7 @@
 // On submit the server inserts a new ShelterTest doc with isActive=false /
 // isVisibleOnMap=false so it stays hidden from the map until an admin
 // approves it via Shelter Dashboard.
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -104,6 +104,11 @@ export default function BuildingRegistrationScreen() {
   const [pickedFile, setPickedFile] = useState<{ name: string; base64: string } | null>(null);
   const [picking, setPicking] = useState(false);
 
+  // Duplicate-address detection (live, debounced)
+  const [addressTaken, setAddressTaken] = useState(false);
+  const [checkingAddress, setCheckingAddress] = useState(false);
+  const checkDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [suggestions, setSuggestions] = useState<NominatimResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -177,6 +182,46 @@ export default function BuildingRegistrationScreen() {
     }
   };
 
+  // Live duplicate-address check. Fires whenever the picked address or
+  // house number changes (debounced 400 ms). Sets `addressTaken` true if
+  // someone else already has an active registration there.
+  useEffect(() => {
+    if (!addressPicked || !address.trim()) {
+      setAddressTaken(false);
+      setCheckingAddress(false);
+      return;
+    }
+    if (checkDebounceRef.current) clearTimeout(checkDebounceRef.current);
+    setCheckingAddress(true);
+    checkDebounceRef.current = setTimeout(async () => {
+      try {
+        const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
+        if (!API_URL) return;
+        const fullAddress = houseNumber.trim()
+          ? `${address.trim()} ${houseNumber.trim()}`
+          : address.trim();
+        const url =
+          `${API_URL}/buildings/check` +
+          `?address=${encodeURIComponent(fullAddress)}` +
+          `&city=${encodeURIComponent(city)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          setAddressTaken(false);
+          return;
+        }
+        const json = await res.json();
+        setAddressTaken(!!json.exists);
+      } catch {
+        setAddressTaken(false);
+      } finally {
+        setCheckingAddress(false);
+      }
+    }, 400);
+    return () => {
+      if (checkDebounceRef.current) clearTimeout(checkDebounceRef.current);
+    };
+  }, [addressPicked, address, houseNumber, city]);
+
   const pickFile = async () => {
     try {
       setPicking(true);
@@ -215,6 +260,13 @@ export default function BuildingRegistrationScreen() {
     }
     if (!addressPicked || lat == null || lng == null) {
       Alert.alert('Address required', 'Please pick an address from the suggestions.');
+      return;
+    }
+    if (addressTaken) {
+      Alert.alert(
+        'Already registered',
+        'A building registration already exists for this address. You cannot register the same building twice.',
+      );
       return;
     }
     const apt = parseInt(apartmentCount, 10);
@@ -320,7 +372,17 @@ export default function BuildingRegistrationScreen() {
             ))}
           </View>
         )}
-        {addressPicked && <Text style={styles.fieldOk}>✓ Address confirmed</Text>}
+        {addressPicked && !addressTaken && !checkingAddress && (
+          <Text style={styles.fieldOk}>✓ Address confirmed</Text>
+        )}
+        {checkingAddress && (
+          <Text style={styles.subtext}>Checking address…</Text>
+        )}
+        {addressTaken && (
+          <Text style={styles.fieldErr}>
+            ⚠️ A registration already exists for this address. You can&apos;t register the same building twice.
+          </Text>
+        )}
       </View>
 
       {/* House number — separate so the user can fix it if Nominatim missed it */}
@@ -447,6 +509,7 @@ const styles = StyleSheet.create({
   },
   suggestionText: { fontSize: 15, color: '#222' },
   fieldOk: { color: '#1D9E75', fontSize: 12, marginTop: 6, fontWeight: '600' },
+  fieldErr: { color: '#e24b4a', fontSize: 13, marginTop: 6, fontWeight: '600', lineHeight: 18 },
   pickBtn: {
     backgroundColor: '#fff', paddingVertical: 14, borderRadius: 8,
     alignItems: 'center', borderWidth: 1.5, borderColor: '#1a73e8',

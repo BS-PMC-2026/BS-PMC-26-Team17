@@ -8,6 +8,7 @@ until an admin approves it via the existing Shelter Dashboard.
 Auth pattern follows ``reports.py``: ``user_id`` is passed explicitly in the
 body / path, no FastAPI ``Depends`` is used.
 """
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -41,6 +42,22 @@ def _serialize(doc: dict) -> dict:
     return out
 
 
+def _address_dup_filter(address: str, city: str) -> dict:
+    """Mongo filter for an active (non-cancelled) registration at this address.
+
+    Address + city are matched case- and whitespace-insensitively. Cancelled
+    registrations don't count — that slot is free again.
+    """
+    addr_pattern = re.escape(address.strip())
+    city_pattern = re.escape((city or "").strip())
+    return {
+        "managerUserId": {"$exists": True},
+        "registrationStatus": {"$in": ["pending", "approved"]},
+        "address": {"$regex": f"^{addr_pattern}$", "$options": "i"},
+        "city": {"$regex": f"^{city_pattern}$", "$options": "i"},
+    }
+
+
 @router.post("/register")
 async def register_building(body: BuildingRegistrationRequest):
     existing = await db["ShelterTest"].find_one(
@@ -53,6 +70,20 @@ async def register_building(body: BuildingRegistrationRequest):
         raise HTTPException(
             status_code=400,
             detail="You already have an active building registration",
+        )
+
+    # Same-address duplicate (different user). Defense in depth — the
+    # frontend also checks this proactively to warn the user before submit.
+    full_address = (
+        f"{body.address}".strip()  # already includes house number from frontend
+    )
+    dup = await db["ShelterTest"].find_one(
+        _address_dup_filter(full_address, body.city or "")
+    )
+    if dup:
+        raise HTTPException(
+            status_code=409,
+            detail="A building registration already exists for this address.",
         )
 
     shelter_name = f"{body.address} - {body.shelterLocation}".strip(" -")
@@ -97,6 +128,16 @@ async def register_building(body: BuildingRegistrationRequest):
 
     result = await db["ShelterTest"].insert_one(doc)
     return {"id": str(result.inserted_id), "message": "Building registered"}
+
+
+@router.get("/check")
+async def check_address(address: str, city: str = ""):
+    """Pre-submission lookup: does an active registration exist at this address?"""
+    doc = await db["ShelterTest"].find_one(_address_dup_filter(address, city))
+    return {
+        "exists": bool(doc),
+        "status": doc.get("registrationStatus") if doc else None,
+    }
 
 
 @router.get("/my/{user_id}")
