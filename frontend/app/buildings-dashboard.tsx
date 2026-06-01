@@ -71,7 +71,7 @@ export default function BuildingsDashboard() {
   const load = async () => {
     setLoading(true);
     try {
-      const res  = await fetch(`${API_URL}/buildings`);
+      const res  = await fetch(`${API_URL}/buildings?user_id=${user?.id}`);
       const json = await res.json();
       setBuildings(json.buildings || json || []);
     } catch (e) {
