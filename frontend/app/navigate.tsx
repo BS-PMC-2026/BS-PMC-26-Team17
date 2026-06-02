@@ -386,6 +386,10 @@ export default function NavigateScreen() {
       const res = await fetch(`${API_URL}/buildings?user_id=${user?.id}`);
       const json = await res.json();
       const approved = (json.buildings || []).filter((b: any) => b.registrationStatus === 'approved');
+      approved.sort((a: any, b: any) =>
+        NavigationService.haversineM(userLocation, { latitude: a.lat, longitude: a.lng }) -
+        NavigationService.haversineM(userLocation, { latitude: b.lat, longitude: b.lng })
+      );
       const closest = approved[0] ?? null;
       setAlternativeBuilding(closest ? { address: closest.address, entranceCode: closest.entranceCode } : null);
       setShowAlternative(true);
