@@ -102,17 +102,21 @@ export default function NearbyShelterSheet({
     return 1;
   }, [mobilityType, isAccessible, childrenCount]);
 
+  console.log('[NearbyShelterSheet]', { speedMultiplier, childrenCount, isAccessible, hasPets, mobilityType });
+
   const sorted = useMemo(() => {
     if (!userLocation) return [];
 
     // Step 1: basic usability + accessibility + pet + capacity filters
     const usable = shelters.filter(s => isUsable(s, isAccessible, hasPets));
+    console.log('[NearbyShelterSheet sorted] total:', shelters.length, '→ after isUsable:', usable.length);
 
     // Step 2: ETA filter — only shelters reachable within MAX_ETA_MINUTES
     const withEta = usable.map(s => ({
       s,
       distM: NavigationService.haversineM(userLocation, { latitude: s.latitude, longitude: s.longitude }),
     })).filter(({ distM }) => distM / (BASE_SPEED_MPM * speedMultiplier) <= MAX_ETA_MINUTES);
+    console.log('[NearbyShelterSheet sorted] → after ETA filter:', withEta.length);
 
     // Step 3: demographic balancing — group by address, compute per-shelter quota
     const byAddress = new Map<string, SheetShelter[]>();
@@ -129,6 +133,7 @@ export default function NearbyShelterSheet({
       const quota = ((s.capacity ?? 0) / totalCap) * s.demographicPotential;
       return (s.reservedPlaces ?? 0) < quota * 0.9;
     });
+    console.log('[NearbyShelterSheet sorted] → after demographic balancing:', demoFiltered.length);
 
     return demoFiltered
       .sort((a, b) => a.distM - b.distM)
@@ -136,10 +141,14 @@ export default function NearbyShelterSheet({
   }, [shelters, userLocation, limit, isAccessible, hasPets, speedMultiplier]);
 
   useEffect(() => {
+    console.log('[NearbyShelterSheet] onNoShelters check:', sorted.length, visible, userLocation !== null);
     if (visible && userLocation && sorted.length === 0) {
+      console.log('[NearbyShelterSheet] onNoShelters triggered', { sortedLength: sorted.length, isVisible: visible, userLocation });
       onNoShelters?.();
     }
   }, [visible, sorted.length, userLocation]);
+
+  console.log('[NearbyShelterSheet] rendering:', sorted.length, 'shelters, first:', sorted[0]?.s ?? null);
 
   return (
     <Modal

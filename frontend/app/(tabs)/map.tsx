@@ -154,6 +154,7 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
   var userMarker = null;
   var searchMarker = null;
   var homeCircle = null;
+  var buildingMarkers = [];
 
   function send(obj) {
     if (window.ReactNativeWebView) {
@@ -218,6 +219,35 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
           icon: L.divIcon({ className:'', html:'<div class="search-pin"></div>', iconSize:[22,22], iconAnchor:[11,22] }),
         }).addTo(map);
       }
+    }
+
+    else if (msg.type === 'addBuildingMarkers') {
+      for (var bi = 0; bi < buildingMarkers.length; bi++) { map.removeLayer(buildingMarkers[bi]); }
+      buildingMarkers = [];
+      for (var bi = 0; bi < msg.buildings.length; bi++) {
+        var b = msg.buildings[bi];
+        if (!b.lat || !b.lng) continue;
+        var bIcon = L.divIcon({
+          html: '<div style="width:32px;height:32px;border-radius:8px;background:#1a73e8;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:17px;">🏢</div>',
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
+          className: '',
+        });
+        var bm = L.marker([b.lat, b.lng], { icon: bIcon });
+        (function(building) {
+          bm.on('click', function(e) {
+            L.DomEvent.stopPropagation(e);
+            send({ type: 'buildingClick', building: building });
+          });
+        })(b);
+        bm.addTo(map);
+        buildingMarkers.push(bm);
+      }
+    }
+
+    else if (msg.type === 'clearBuildingMarkers') {
+      for (var bi = 0; bi < buildingMarkers.length; bi++) { map.removeLayer(buildingMarkers[bi]); }
+      buildingMarkers = [];
     }
 
     else if (msg.type === 'setHomeCircle') {
@@ -404,11 +434,15 @@ export default function MapScreen() {
   };
 
   const openShelter = useCallback((sh: ShelterPin) => {
-    const suffix = (!simOn || !simCoords)
-      ? ''
-      : `&fromLat=${simCoords.latitude}&fromLng=${simCoords.longitude}`;
-    router.push(`/shelter-details?${shelterParams(sh)}${suffix}` as any);
-  }, [simOn, simCoords]);
+    const from = (simOn && simCoords)
+      ? simCoords
+      : userLocation
+        ? { latitude: userLocation.latitude, longitude: userLocation.longitude }
+        : null;
+    const fromSuffix = from ? `&fromLat=${from.latitude}&fromLng=${from.longitude}` : '';
+    const alertSuffix = activeAlert ? `&alertKind=${activeAlert.kind}` : '';
+    router.push(`/shelter-details?${shelterParams(sh)}${fromSuffix}${alertSuffix}` as any);
+  }, [simOn, simCoords, userLocation, activeAlert]);
 
   // ── Alert handling — banner taps + siren auto-navigate ──────────────────
   // Kept together here, after `openShelter`, because `handleNearbyPick`
@@ -579,6 +613,8 @@ export default function MapScreen() {
           Math.hypot(a.lat - pos.latitude, a.lng - pos.longitude) -
           Math.hypot(b.lat - pos.latitude, b.lng - pos.longitude)
         );
+        // Show all approved buildings on the map as 🏢 markers
+        sendToWeb({ type: 'addBuildingMarkers', buildings });
         const closest = buildings[0];
         const params =
           `lat=${closest.lat}` +
@@ -862,6 +898,17 @@ export default function MapScreen() {
         setPin(null);
         openShelter(found);
       }
+      return;
+    }
+
+    if (msg.type === 'buildingClick') {
+      const b = msg.building;
+      const fromStr = userLocation
+        ? `&fromLat=${userLocation.latitude}&fromLng=${userLocation.longitude}`
+        : '';
+      router.push(
+        `/shelter-details?lat=${b.lat}&lng=${b.lng}&name=${encodeURIComponent(b.address || 'בניין מגורים')}&alertKind=early${fromStr}` as any
+      );
       return;
     }
 
@@ -1262,7 +1309,7 @@ export default function MapScreen() {
       {/* Pikud HaOref alert — banner overlay + demo injection modal */}
       <AlertBanner
         alert={activeAlert}
-        onDismiss={() => setActiveAlert(null)}
+        onDismiss={() => { setActiveAlert(null); sendToWeb({ type: 'clearBuildingMarkers' }); }}
         onPress={handleBannerPress}
       />
       <AlertInjectModal

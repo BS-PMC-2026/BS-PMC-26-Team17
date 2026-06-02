@@ -89,6 +89,12 @@ export default function ShelterDetailsScreen() {
     { key: 'driving' as const, label: 'Driving', icon: '🚗' },
   ];
 
+  console.log('[ShelterDetails]', {
+    params: { id: p.id, lat: p.lat, lng: p.lng, name: p.name, alertKind: p.alertKind, fromLat: p.fromLat, fromLng: p.fromLng },
+    distanceM,
+    eta: { foot: etaMin('foot'), cycling: etaMin('cycling'), driving: etaMin('driving') },
+  });
+
   const navigate = () => {
     // Forward the sim "from" point if it was carried in by map.tsx — keeps
     // the simulated joystick position as the start of the route.
