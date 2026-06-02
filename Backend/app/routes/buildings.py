@@ -13,12 +13,22 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.core.database import db
 
 router = APIRouter(prefix="/buildings", tags=["buildings"])
+
+
+async def _is_admin(user_id: str) -> bool:
+    if not user_id:
+        return False
+    try:
+        user = await db["User"].find_one({"_id": ObjectId(user_id)})
+    except Exception:
+        return False
+    return bool(user and user.get("role") == "admin")
 
 
 class BuildingRegistrationRequest(BaseModel):
@@ -227,3 +237,38 @@ async def cancel_registration(registration_id: str, body: CancelRegistrationRequ
         },
     )
     return {"message": "Registration cancelled"}
+
+
+@router.get("")
+async def list_buildings(user_id: str = Query(...)):
+    """Admin: return all building registrations (docs with registrationStatus)."""
+    if not await _is_admin(user_id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    cursor = db["ShelterTest"].find({"registrationStatus": {"$exists": True}})
+    buildings = []
+    async for doc in cursor:
+        manager_id   = doc.get("managerUserId", "")
+        manager_name = ""
+        if manager_id:
+            try:
+                manager = await db["User"].find_one({"_id": ObjectId(manager_id)})
+                if manager:
+                    first = manager.get("firstName", "")
+                    last  = manager.get("lastName", "")
+                    manager_name = f"{first} {last}".strip()
+            except Exception:
+                pass
+
+        buildings.append({
+            "id":                     str(doc["_id"]),
+            "address":                doc.get("address", ""),
+            "city":                   doc.get("city", ""),
+            "registrationStatus":     doc.get("registrationStatus", "pending"),
+            "entranceCode":           doc.get("entranceCode", ""),
+            "managerUserId":          manager_id,
+            "managerName":            manager_name,
+            "registrationFileName":   doc.get("registrationFileName"),
+            "registrationFileBase64": doc.get("registrationFileBase64"),
+        })
+    return {"buildings": buildings}
