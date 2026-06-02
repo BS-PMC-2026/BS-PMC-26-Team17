@@ -287,6 +287,8 @@ export default function MapScreen() {
   // `userSettings.isHandicapped` in AsyncStorage so the same flag drives
   // both this toggle and the Settings screen Switch.
   const [accessibleOnly, setAccessibleOnly] = useState(false);
+  const [sheetChildrenCount, setSheetChildrenCount] = useState(0);
+  const [sheetHasPets, setSheetHasPets]             = useState(false);
 
   // ─── SimJoystick state — fake GPS for demos / QA ─────────────────────────
   const [simOn, setSimOn]         = useState(false);
@@ -563,6 +565,50 @@ export default function MapScreen() {
     router.push(`/navigate?${params}` as any);
   }, [shelterPins, openShelter, activeAlert, postReservation, simOn, simCoords]);
 
+  // No shelters passed all filters — try to route to the closest approved
+  // registered building instead. If none exists, show safety instructions.
+  const handleNoShelters = useCallback(async () => {
+    setNearbySheetOpen(false);
+    const pos = (simOn && simCoords) ? simCoords : userLocation;
+    try {
+      const res  = await fetch(`${API_URL}/buildings/approved`);
+      const json = await res.json();
+      const buildings: any[] = json.buildings || [];
+      if (buildings.length > 0 && pos) {
+        buildings.sort((a, b) =>
+          Math.hypot(a.lat - pos.latitude, a.lng - pos.longitude) -
+          Math.hypot(b.lat - pos.latitude, b.lng - pos.longitude)
+        );
+        const closest = buildings[0];
+        const params =
+          `lat=${closest.lat}` +
+          `&lng=${closest.lng}` +
+          `&name=${encodeURIComponent(closest.address || 'בניין מגורים')}` +
+          `&emergency=true`;
+        Alert.alert(
+          'מנווט לבניין מגורים',
+          'מנווט לבניין מגורים. הקוד לכניסה יוצג כשתתחיל האזעקה',
+          [
+            { text: 'בטל', style: 'cancel' },
+            { text: 'נווט', onPress: () => router.push(`/navigate?${params}` as any) },
+          ]
+        );
+      } else {
+        Alert.alert(
+          'אין מקלט בקרבת מקום',
+          'לא נמצא מקלט זמין בטווח. אם תישמע אזעקה: שכב/י על הקרקע, הגן/י על הראש עם הידיים, והתרחק/י מחלונות.',
+          [{ text: 'הבנתי' }]
+        );
+      }
+    } catch {
+      Alert.alert(
+        'אין מקלט בקרבת מקום',
+        'לא נמצא מקלט זמין בטווח. אם תישמע אזעקה: שכב/י על הקרקע, הגן/י על הראש עם הידיים, והתרחק/י מחלונות.',
+        [{ text: 'הבנתי' }]
+      );
+    }
+  }, [userLocation, simOn, simCoords]);
+
   // Siren sheet → user changed transport mode. Re-route to the same target.
   // skipPrompt=true so the SirenGroupPromptModal doesn't re-open on the
   // re-mounted navigate screen — the user already answered earlier.
@@ -667,6 +713,8 @@ export default function MapScreen() {
           setSavedMode(
             m === 'cycling' || m === 'driving' ? m : 'walking'
           );
+          setSheetChildrenCount(typeof p.childrenCount === 'number' ? p.childrenCount : 0);
+          setSheetHasPets(!!p.hasPets);
         } catch {
           setHome(null);
           setSavedMode('walking');
@@ -1236,6 +1284,11 @@ export default function MapScreen() {
               ? { latitude: userLocation.latitude, longitude: userLocation.longitude }
               : null
         }
+        childrenCount={sheetChildrenCount}
+        isAccessible={accessibleOnly}
+        hasPets={sheetHasPets}
+        mobilityType={savedMode}
+        onNoShelters={handleNoShelters}
       />
 
       {/* Siren sheet — change transport mode mid-route and/or update
