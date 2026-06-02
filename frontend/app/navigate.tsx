@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ActivityIndicator, SafeAreaView,
+  ActivityIndicator, SafeAreaView, ScrollView,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
@@ -12,6 +12,9 @@ import SimJoystick from '@/components/SimJoystick';
 import SirenGroupPromptModal from '@/components/SirenGroupPromptModal';
 import { ReservationService } from '@/services/ReservationService';
 import { useAuth } from '@/context/auth';
+import { API_URL } from '@/config';
+import { getAlertTime } from '@/services/alertTimes';
+import { OrefZonesService } from '@/services/OrefZonesService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -189,6 +192,9 @@ export default function NavigateScreen() {
   // Guard against firing /arrive multiple times concurrently while the
   // first request is in flight.
   const arriveInFlight = useRef(false);
+  // Tracks the most recent ETA in seconds so checkAlternativeNeeded can
+  // compare against the zone's alert time without parsing the formatted label.
+  const etaSecondsRef  = useRef(0);
 
   const [phase, setPhase]               = useState<'select' | 'navigating'>(
     isEmergency ? 'navigating' : 'select'
@@ -219,6 +225,10 @@ export default function NavigateScreen() {
   const [groupPromptOpen, setGroupPromptOpen] = useState(
     isEmergency && reservationReady && skipPrompt !== 'true',
   );
+
+  const [showAlternative, setShowAlternative]         = useState(false);
+  const [alternativeBuilding, setAlternativeBuilding] = useState<{ address: string; entranceCode: string } | null>(null);
+  const [codeVisible, setCodeVisible]                 = useState(true);
 
   const handleGroupSizeConfirm = useCallback(async (groupSize: number) => {
     setGroupPromptOpen(false);
@@ -366,6 +376,27 @@ export default function NavigateScreen() {
       .finally(() => setLoading(false));
   }, [isEmergency, userLocation, mode]);
 
+  // ─── Alternative shelter check ──────────────────────────────────────────
+  const checkAlternativeNeeded = async () => {
+    if (!userLocation) return;
+    await OrefZonesService.load();
+    const zone = OrefZonesService.getZone(userLocation.latitude, userLocation.longitude);
+    const alertTime = getAlertTime(zone ?? '');
+    if (etaSecondsRef.current > alertTime) {
+      const res = await fetch(`${API_URL}/buildings?user_id=${user?.id}`);
+      const json = await res.json();
+      const approved = (json.buildings || []).filter((b: any) => b.registrationStatus === 'approved');
+      approved.sort((a: any, b: any) =>
+        NavigationService.haversineM(userLocation, { latitude: a.lat, longitude: a.lng }) -
+        NavigationService.haversineM(userLocation, { latitude: b.lat, longitude: b.lng })
+      );
+      const closest = approved[0] ?? null;
+      setAlternativeBuilding(closest ? { address: closest.address, entranceCode: closest.entranceCode } : null);
+      setShowAlternative(true);
+      if (closest) setTimeout(() => setCodeVisible(false), 5 * 60 * 1000);
+    }
+  };
+
   // ─── Apply RouteResult to state ─────────────────────────────────────────
   function applyRoute(result: RouteResult) {
     polylineRef.current = result.polyline;
@@ -374,7 +405,9 @@ export default function NavigateScreen() {
     setCurrentStep(0);
     setEta(result.etaLabel);
     setDistance(result.distLabel);
+    etaSecondsRef.current = result.durationSec;
     setPhase('navigating');
+    if (alertKind === 'siren') checkAlternativeNeeded();
     // Draw the route now (also re-runs via the webReady effect if needed)
     pushRouteToMap(result.polyline);
     const coords = result.polyline.map(c => ({ lat: c.latitude, lng: c.longitude }));
@@ -524,9 +557,9 @@ export default function NavigateScreen() {
       // Re-draw shrinking polyline as the user advances along the route
       pushRouteToMap(remaining);
       setDistance(NavigationService.formatDistance(distanceM));
-      setEta(NavigationService.formatDuration(
-        NavigationService.calculateETA(distanceM, modeRef.current)
-      ));
+      const etaSec = NavigationService.calculateETA(distanceM, modeRef.current);
+      etaSecondsRef.current = etaSec;
+      setEta(NavigationService.formatDuration(etaSec));
 
       // Off-route → fetch a fresh route from the current position and
       // actually APPLY it (not just refresh the background cache). This is
@@ -710,6 +743,41 @@ export default function NavigateScreen() {
         onDismiss={() => setGroupPromptOpen(false)}
         initialGroupSize={initialReservationSize}
       />
+
+      {/* Alternative shelter / safety instructions overlay */}
+      {showAlternative && (
+        <View style={s.altOverlay}>
+          <View style={s.altCard}>
+            <TouchableOpacity
+              style={s.altClose}
+              onPress={() => setShowAlternative(false)}
+              accessibilityLabel="סגור"
+            >
+              <Text style={s.altCloseIcon}>✕</Text>
+            </TouchableOpacity>
+
+            {alternativeBuilding ? (
+              <>
+                <Text style={s.altTitle}>אין מקלט בטווח</Text>
+                <Text style={s.altAddress}>{alternativeBuilding.address}</Text>
+                {codeVisible ? (
+                  <Text style={s.altCode}>קוד כניסה: {alternativeBuilding.entranceCode}</Text>
+                ) : (
+                  <Text style={s.altExpired}>פג תוקף הקוד</Text>
+                )}
+              </>
+            ) : mode === 'driving' ? (
+              <ScrollView>
+                <Text style={s.altInstructions}>
+                  עצרו בצד הדרך, צאו מהרכב והיכנסו למרחב המוגן המיטבי הקרוב ביותר. אם לא ניתן להגיע למבנה במהירות - צאו והתרחקו מהרכב מעבר לשולי הדרך או למעקה הבטיחות, שכבו על הקרקע והגנו על הראש עם הידיים. רק אם לא ניתן לצאת מהרכב - עצרו בצד הדרך, פתחו את החלונות והתכופפו מתחת לקו החלונות.
+                </Text>
+              </ScrollView>
+            ) : (
+              <Text style={s.altInstructions}>שכבו על הקרקע והגנו על הראש עם הידיים.</Text>
+            )}
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -778,6 +846,29 @@ const s = StyleSheet.create({
     alignItems: 'center',
     zIndex: 9,
   },
+  // Alternative shelter overlay
+  altOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    zIndex: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  altCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxHeight: '80%',
+  },
+  altClose:        { alignSelf: 'flex-end', padding: 4, marginBottom: 4 },
+  altCloseIcon:    { fontSize: 18, color: '#555' },
+  altTitle:        { fontSize: 20, fontWeight: '700', color: '#e53935', textAlign: 'right', marginBottom: 12 },
+  altAddress:      { fontSize: 16, color: '#333', textAlign: 'right', marginBottom: 8 },
+  altCode:         { fontSize: 18, fontWeight: '700', color: '#1a73e8', textAlign: 'right', marginTop: 8 },
+  altExpired:      { fontSize: 14, color: '#999', textAlign: 'right', marginTop: 8 },
+  altInstructions: { fontSize: 15, color: '#333', textAlign: 'right', lineHeight: 24 },
   // HUD
   hud:              { backgroundColor: '#1a73e8', paddingHorizontal: 20, paddingVertical: 16, minHeight: 80, justifyContent: 'center' },
   hudArrived:       { backgroundColor: '#1D9E75' },

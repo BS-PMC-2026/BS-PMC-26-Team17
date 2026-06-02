@@ -97,6 +97,15 @@ async def register_building(body: BuildingRegistrationRequest):
             detail="A building registration already exists for this address.",
         )
 
+    # Confirm the user lives at the address they are trying to register.
+    user = await db["User"].find_one({"_id": ObjectId(body.user_id)})
+    user_address = (user.get("address") or "").strip().lower() if user else ""
+    if user_address != body.address.strip().lower():
+        raise HTTPException(
+            status_code=400,
+            detail="You can only register a building where you live",
+        )
+
     shelter_name = f"{body.address} - {body.shelterLocation}".strip(" -")
     estimated_capacity = (body.apartmentCount or 0) * 3
 
@@ -163,6 +172,41 @@ async def get_my_registration(user_id: str):
         return {"registration": None}
     doc.pop("registrationFileBase64", None)
     return {"registration": _serialize(doc)}
+
+
+@router.patch("/{building_id}/approve")
+async def approve_building(building_id: str):
+    try:
+        oid = ObjectId(building_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid building id")
+
+    doc = await db["ShelterTest"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    await db["ShelterTest"].update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "registrationStatus": "approved",
+                "isActive": True,
+                "isVisibleOnMap": True,
+                "approvedAt": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
+
+    # Grant arnona discount to all residents of this building.
+    building_address = (doc.get("address") or "").strip()
+    if building_address:
+        addr_pattern = re.escape(building_address)
+        await db["User"].update_many(
+            {"address": {"$regex": addr_pattern, "$options": "i"}},
+            {"$set": {"isArnonaDiscount": True}},
+        )
+
+    return {"message": "Building approved"}
 
 
 class CancelRegistrationRequest(BaseModel):
