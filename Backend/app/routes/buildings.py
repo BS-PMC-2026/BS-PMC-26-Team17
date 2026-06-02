@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.core.database import db
+from app.routes.MessageAll.push import send_expo_push
 
 router = APIRouter(prefix="/buildings", tags=["buildings"])
 
@@ -189,41 +190,6 @@ async def get_my_registration(user_id: str):
     return {"registration": _serialize(doc)}
 
 
-@router.patch("/{building_id}/approve")
-async def approve_building(building_id: str):
-    try:
-        oid = ObjectId(building_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid building id")
-
-    doc = await db["ShelterTest"].find_one({"_id": oid})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Building not found")
-
-    await db["ShelterTest"].update_one(
-        {"_id": oid},
-        {
-            "$set": {
-                "registrationStatus": "approved",
-                "isActive": True,
-                "isVisibleOnMap": True,
-                "approvedAt": datetime.now(timezone.utc).isoformat(),
-            }
-        },
-    )
-
-    # Grant arnona discount to all residents of this building.
-    building_address = (doc.get("address") or "").strip()
-    if building_address:
-        addr_pattern = re.escape(building_address)
-        await db["User"].update_many(
-            {"address": {"$regex": addr_pattern, "$options": "i"}},
-            {"$set": {"isArnonaDiscount": True}},
-        )
-
-    return {"message": "Building approved"}
-
-
 class CancelRegistrationRequest(BaseModel):
     user_id: str
 
@@ -288,3 +254,108 @@ async def list_buildings(user_id: str = Query(...)):
             "registrationFileBase64": doc.get("registrationFileBase64"),
         })
     return {"buildings": buildings}
+
+
+class ApproveRequest(BaseModel):
+    user_id: str
+
+
+@router.patch("/{registration_id}/approve")
+async def approve_building(registration_id: str, body: ApproveRequest):
+    """Admin: approve a pending building registration."""
+    if not await _is_admin(body.user_id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        oid = ObjectId(registration_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid registration id")
+
+    doc = await db["ShelterTest"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Building registration not found")
+    if doc.get("registrationStatus") == "approved":
+        raise HTTPException(status_code=409, detail="Already approved")
+
+    await db["ShelterTest"].update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "registrationStatus": "approved",
+                "isActive":           True,
+                "isVisibleOnMap":     False,  # stays hidden from public map
+                "approvedAt":         datetime.now(timezone.utc).isoformat(),
+                "approvedBy":         body.user_id,
+            }
+        },
+    )
+
+    # Send push notification to the building manager (best-effort).
+    manager_id = doc.get("managerUserId")
+    if manager_id:
+        try:
+            manager = await db["User"].find_one({"_id": ObjectId(manager_id)})
+            token = manager.get("expoPushToken") if manager else None
+            if token:
+                await send_expo_push(
+                    tokens=[token],
+                    title="Building Registration Approved ✅",
+                    body=(
+                        f"Your building at {doc.get('address', 'your address')} "
+                        "has been approved by an admin."
+                    ),
+                    data={"type": "building_approved", "buildingId": registration_id},
+                )
+        except Exception as e:
+            print(f"[buildings] push notification failed: {e}")
+
+    return {"message": "Building approved", "id": registration_id}
+
+
+@router.patch("/{registration_id}/reject")
+async def reject_building(registration_id: str, body: ApproveRequest):
+    """Admin: reject a pending building registration."""
+    if not await _is_admin(body.user_id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        oid = ObjectId(registration_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid registration id")
+
+    doc = await db["ShelterTest"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Building registration not found")
+    if doc.get("registrationStatus") == "rejected":
+        raise HTTPException(status_code=409, detail="Already rejected")
+
+    await db["ShelterTest"].update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "registrationStatus": "rejected",
+                "isActive":           False,
+                "isVisibleOnMap":     False,
+                "rejectedAt":         datetime.now(timezone.utc).isoformat(),
+                "rejectedBy":         body.user_id,
+            }
+        },
+    )
+
+    # Send push notification to the building manager (best-effort).
+    manager_id = doc.get("managerUserId")
+    if manager_id:
+        try:
+            manager = await db["User"].find_one({"_id": ObjectId(manager_id)})
+            token = manager.get("expoPushToken") if manager else None
+            if token:
+                await send_expo_push(
+                    tokens=[token],
+                    title="Building Registration Rejected ❌",
+                    body="Your building registration request has been rejected. Please contact the admin for more information.",
+                    data={"type": "building_rejected", "buildingId": registration_id},
+                )
+        except Exception as e:
+            print(f"[buildings] push notification failed: {e}")
+
+    return {"message": "Building rejected", "id": registration_id}

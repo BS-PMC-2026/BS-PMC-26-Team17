@@ -472,6 +472,13 @@ export default function SettingsScreen() {
           >
             <Text style={styles.adminBtnText}>📋 Shelter Dashboard</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.adminBtn}
+            onPress={() => router.push('/buildings-dashboard' as any)}
+            testID="buildings-dashboard-button"
+          >
+            <Text style={styles.adminBtnText}>🏢 Buildings Dashboard</Text>
+          </TouchableOpacity>
         </View>
       )}
 

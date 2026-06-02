@@ -285,6 +285,33 @@ export default function BuildingRegistrationScreen() {
       return;
     }
 
+    // Re-check for duplicates at submit time. The debounced live check may
+    // still be in-flight (user hit Submit quickly) or may be stale (another
+    // user registered the same address after the live check ran).
+    try {
+      const fullAddress = houseNumber.trim()
+        ? `${address.trim()} ${houseNumber.trim()}`
+        : address.trim();
+      const checkRes = await fetch(
+        `${API_URL}/buildings/check` +
+        `?address=${encodeURIComponent(fullAddress)}` +
+        `&city=${encodeURIComponent(city)}`,
+      );
+      if (checkRes.ok) {
+        const checkJson = await checkRes.json();
+        if (checkJson.exists) {
+          setAddressTaken(true);
+          Alert.alert(
+            'Already registered',
+            'A building registration already exists for this address. You cannot register the same building twice.',
+          );
+          return;
+        }
+      }
+    } catch {
+      // Network error on the pre-check — let the server reject it if needed.
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch(`${API_URL}/buildings/register`, {
