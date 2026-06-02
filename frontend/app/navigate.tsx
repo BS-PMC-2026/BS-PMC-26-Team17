@@ -397,14 +397,6 @@ export default function NavigateScreen() {
     }
   };
 
-  // Poll every 15 s during early (pre-siren) alerts.
-  useEffect(() => {
-    if (alertKind !== 'early') return;
-    const id = setInterval(checkAlternativeNeeded, 15_000);
-    return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alertKind]);
-
   // ─── Apply RouteResult to state ─────────────────────────────────────────
   function applyRoute(result: RouteResult) {
     polylineRef.current = result.polyline;
