@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
+import * as Location from 'expo-location';
 import { useAuth } from '@/context/auth';
+import { NavigationService } from '@/services/NavigationService';
 
 const ACCESS_LABELS: Record<string, string> = { open: 'Open', closed: 'Closed', locked: 'Locked', unknown: 'Unknown' };
 const ACCESS_COLORS: Record<string, string> = { open: '#1D9E75', closed: '#E24B4A', locked: '#888780', unknown: '#BA7517' };
@@ -38,6 +40,8 @@ export default function ShelterDetailsScreen() {
     // Carried through from map.tsx when the SimJoystick is active so the
     // navigation route is computed from the simulated dot, not real GPS.
     fromLat?: string; fromLng?: string;
+    // Alert context — passed when opened during an early-warning alert.
+    alertKind?: string;
   }>();
 
   const lat = parseFloat(p.lat || '0');
@@ -48,6 +52,42 @@ export default function ShelterDetailsScreen() {
   const hasStairs        = p.hasStairs === 'true';
   const petIssueReported = p.petIssueReported === 'true';
   const shouldBeOpen     = p.shouldBeOpen === 'true';
+  const isEarlyWarning   = p.alertKind === 'early';
+
+  const [selectedMode, setSelectedMode] = useState<'foot' | 'cycling' | 'driving'>('foot');
+  const [distanceM, setDistanceM]       = useState<number | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      let userLat: number | null = null;
+      let userLng: number | null = null;
+      if (p.fromLat && p.fromLng) {
+        userLat = parseFloat(p.fromLat);
+        userLng = parseFloat(p.fromLng);
+      } else {
+        const pos = await Location.getLastKnownPositionAsync();
+        if (pos) { userLat = pos.coords.latitude; userLng = pos.coords.longitude; }
+      }
+      if (userLat != null && userLng != null) {
+        setDistanceM(NavigationService.haversineM(
+          { latitude: userLat, longitude: userLng },
+          { latitude: lat,     longitude: lng },
+        ));
+      }
+    })();
+  }, []);
+
+  const BASE_MPM = 83;
+  const SPEED: Record<string, number> = { foot: BASE_MPM, cycling: BASE_MPM * 2.5, driving: BASE_MPM * 8 };
+  const etaMin = (mode: string) =>
+    distanceM != null ? distanceM / SPEED[mode] : null;
+  const tooFar = (mode: string) => { const e = etaMin(mode); return e != null && e > 10; };
+
+  const MODES = [
+    { key: 'foot'    as const, label: 'Walking', icon: '🚶' },
+    { key: 'cycling' as const, label: 'Cycling', icon: '🚴' },
+    { key: 'driving' as const, label: 'Driving', icon: '🚗' },
+  ];
 
   const navigate = () => {
     // Forward the sim "from" point if it was carried in by map.tsx — keeps
@@ -55,7 +95,7 @@ export default function ShelterDetailsScreen() {
     const fromSuffix =
       p.fromLat && p.fromLng ? `&fromLat=${p.fromLat}&fromLng=${p.fromLng}` : '';
     router.push(
-      `/navigate?lat=${lat}&lng=${lng}&name=${encodeURIComponent(p.name || 'Shelter')}${fromSuffix}`,
+      `/navigate?lat=${lat}&lng=${lng}&name=${encodeURIComponent(p.name || 'Shelter')}&mode=${selectedMode}${fromSuffix}`,
     );
   };
 
@@ -128,8 +168,34 @@ export default function ShelterDetailsScreen() {
         <View style={{ height: 30 }} />
       </ScrollView>
 
+      {isEarlyWarning && (
+        <View style={s.modeRow}>
+          {MODES.map(m => {
+            const far  = tooFar(m.key);
+            const eta  = etaMin(m.key);
+            const etaLabel = eta != null ? `${Math.ceil(eta)} min` : '';
+            return (
+              <TouchableOpacity
+                key={m.key}
+                style={[s.modeBtn, selectedMode === m.key && s.modeBtnOn, far && s.modeBtnFar]}
+                onPress={() => !far && setSelectedMode(m.key)}
+                disabled={far}
+              >
+                <Text style={s.modeBtnIcon}>{m.icon}</Text>
+                <Text style={[s.modeBtnLabel, selectedMode === m.key && s.modeBtnLabelOn]}>{m.label}</Text>
+                {etaLabel ? <Text style={[s.modeBtnEta, far && s.modeBtnEtaFar]}>{etaLabel}</Text> : null}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
       <View style={s.actions}>
-        <TouchableOpacity style={[s.navBtn, s.actionBtn]} onPress={navigate}>
+        <TouchableOpacity
+          style={[s.navBtn, s.actionBtn, isEarlyWarning && tooFar(selectedMode) && s.navBtnDisabled]}
+          onPress={navigate}
+          disabled={isEarlyWarning && tooFar(selectedMode)}
+        >
           <Text style={s.navBtnText}>🧭 Navigate</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[s.reportBtn, s.actionBtn]} onPress={report}>
@@ -174,6 +240,16 @@ const s = StyleSheet.create({
   dataLabel: { width: 140, fontSize: 14, color: '#888', fontWeight: '500' },
   dataValue: { flex: 1, fontSize: 15, color: '#222' },
 
+  modeRow:        { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 0.5, borderTopColor: '#eee' },
+  modeBtn:        { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 12, borderWidth: 1.5, borderColor: '#e0e0e0', backgroundColor: '#fafafa' },
+  modeBtnOn:      { borderColor: '#1a73e8', backgroundColor: '#e8f0fe' },
+  modeBtnFar:     { opacity: 0.4 },
+  modeBtnIcon:    { fontSize: 20, marginBottom: 2 },
+  modeBtnLabel:   { fontSize: 12, fontWeight: '600', color: '#555' },
+  modeBtnLabelOn: { color: '#1a73e8' },
+  modeBtnEta:     { fontSize: 11, color: '#888', marginTop: 2 },
+  modeBtnEtaFar:  { color: '#E24B4A' },
+  navBtnDisabled: { backgroundColor: '#93b9f5' },
   actions:    { flexDirection: 'row', gap: 8, padding: 16, borderTopWidth: 0.5, borderTopColor: '#eee' },
   actionBtn:  { flex: 1 },
   navBtn:     { backgroundColor: '#1a73e8', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
