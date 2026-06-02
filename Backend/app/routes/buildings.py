@@ -86,6 +86,15 @@ async def register_building(body: BuildingRegistrationRequest):
             detail="A building registration already exists for this address.",
         )
 
+    # Confirm the user lives at the address they are trying to register.
+    user = await db["User"].find_one({"_id": ObjectId(body.user_id)})
+    user_address = (user.get("address") or "").strip().lower() if user else ""
+    if user_address != body.address.strip().lower():
+        raise HTTPException(
+            status_code=400,
+            detail="You can only register a building where you live",
+        )
+
     shelter_name = f"{body.address} - {body.shelterLocation}".strip(" -")
     estimated_capacity = (body.apartmentCount or 0) * 3
 
