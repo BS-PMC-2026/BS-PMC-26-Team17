@@ -159,6 +159,22 @@ async def check_address(address: str, city: str = ""):
     }
 
 
+@router.get("/approved")
+async def list_approved_buildings(lat: Optional[float] = Query(None), lng: Optional[float] = Query(None)):
+    """Return all approved buildings with their entrance codes."""
+    cursor = db["ShelterTest"].find({"registrationStatus": "approved"})
+    buildings = []
+    async for doc in cursor:
+        buildings.append({
+            "id":           str(doc["_id"]),
+            "address":      doc.get("address", ""),
+            "entranceCode": doc.get("entranceCode", ""),
+            "lat":          doc.get("lat"),
+            "lng":          doc.get("lng"),
+        })
+    return {"buildings": buildings}
+
+
 @router.get("/my/{user_id}")
 async def get_my_registration(user_id: str):
     doc = await db["ShelterTest"].find_one(

@@ -206,6 +206,7 @@ export default function NavigateScreen() {
   const [steps, setSteps]               = useState<any[]>([]);
   const [currentStep, setCurrentStep]   = useState(0);
   const [eta, setEta]                   = useState('');
+  const [currentDestName, setCurrentDestName] = useState(name || '');
   const [distance, setDistance]         = useState('');
   const [loading, setLoading]           = useState(isEmergency);
   const [error, setError]               = useState('');
@@ -382,10 +383,17 @@ export default function NavigateScreen() {
     await OrefZonesService.load();
     const zone = OrefZonesService.getZone(userLocation.latitude, userLocation.longitude);
     const alertTime = getAlertTime(zone ?? '');
+    console.log('[checkAlternativeNeeded]', {
+      userLocation: { lat: userLocation.latitude, lng: userLocation.longitude },
+      zone,
+      alertTimeSec: alertTime,
+      etaSeconds: etaSecondsRef.current,
+    });
     if (etaSecondsRef.current > alertTime) {
-      const res = await fetch(`${API_URL}/buildings?user_id=${user?.id}`);
+      const res = await fetch(`${API_URL}/buildings/approved`);
       const json = await res.json();
-      const approved = (json.buildings || []).filter((b: any) => b.registrationStatus === 'approved');
+      const approved = json.buildings || [];
+      console.log('[checkAlternativeNeeded] buildings response:', json, 'approved:', approved);
       approved.sort((a: any, b: any) =>
         NavigationService.haversineM(userLocation, { latitude: a.lat, longitude: a.lng }) -
         NavigationService.haversineM(userLocation, { latitude: b.lat, longitude: b.lng })
@@ -393,12 +401,25 @@ export default function NavigateScreen() {
       const closest = approved[0] ?? null;
       setAlternativeBuilding(closest ? { address: closest.address, entranceCode: closest.entranceCode } : null);
       setShowAlternative(true);
-      if (closest) setTimeout(() => setCodeVisible(false), 5 * 60 * 1000);
+      if (closest) {
+        setCurrentDestName(closest.address);
+        setTimeout(() => setCodeVisible(false), 5 * 60 * 1000);
+        try {
+          const altDest: Coord = { latitude: closest.lat, longitude: closest.lng };
+          console.log('[checkAlternativeNeeded] calling emergencyRoute to:', altDest);
+          const altRoute = await NavigationService.emergencyRoute(userLocation, altDest, modeRef.current);
+          applyRoute(altRoute, true);
+          console.log('[checkAlternativeNeeded] rerouted to building:', closest.address, closest.lat, closest.lng);
+          setTimeout(() => sendToWeb({ type: 'setDestination', lat: closest.lat, lng: closest.lng }), 500);
+        } catch (e) {
+          console.warn('[checkAlternativeNeeded] reroute to alternative building failed:', e);
+        }
+      }
     }
   };
 
   // ─── Apply RouteResult to state ─────────────────────────────────────────
-  function applyRoute(result: RouteResult) {
+  function applyRoute(result: RouteResult, fromAlternative: boolean = false) {
     polylineRef.current = result.polyline;
     stepsRef.current    = result.steps;
     setSteps(result.steps);
@@ -407,7 +428,7 @@ export default function NavigateScreen() {
     setDistance(result.distLabel);
     etaSecondsRef.current = result.durationSec;
     setPhase('navigating');
-    if (alertKind === 'siren') checkAlternativeNeeded();
+    if (alertKind === 'siren' && !fromAlternative) checkAlternativeNeeded();
     // Draw the route now (also re-runs via the webReady effect if needed)
     pushRouteToMap(result.polyline);
     const coords = result.polyline.map(c => ({ lat: c.latitude, lng: c.longitude }));
@@ -592,7 +613,7 @@ export default function NavigateScreen() {
             <Text style={s.closeIcon}>✕</Text>
           </TouchableOpacity>
           <View style={s.headerInfo}>
-            <Text style={s.destName} numberOfLines={1}>{name || 'Shelter'}</Text>
+            <Text style={s.destName} numberOfLines={1}>{currentDestName || 'Shelter'}</Text>
             <Text style={s.destSub}>Choose how to get there</Text>
           </View>
         </View>
@@ -650,7 +671,7 @@ export default function NavigateScreen() {
           <Text style={s.closeIcon}>✕</Text>
         </TouchableOpacity>
         <View style={s.headerInfo}>
-          <Text style={s.destName} numberOfLines={1}>{name || 'Shelter'}</Text>
+          <Text style={s.destName} numberOfLines={1}>{currentDestName || 'Shelter'}</Text>
           {eta && distance && <Text style={s.etaText}>{eta}  ·  {distance}</Text>}
           <Text style={s.destSub}>
             {mode === 'foot' ? '🚶 Walking' : mode === 'cycling' ? '🚴 Cycling' : '🚗 Driving'}
@@ -692,6 +713,19 @@ export default function NavigateScreen() {
           >
             <Text style={s.locateIcon}>📍</Text>
           </TouchableOpacity>
+
+          {/* 🔑 entrance-code button — visible for 5 min after an alternative
+              building is found. Reopens the altOverlay so the user can read
+              the code again without dismissing their current view. */}
+          {alternativeBuilding && codeVisible && (
+            <TouchableOpacity
+              style={s.codeBtn}
+              onPress={() => setShowAlternative(true)}
+              accessibilityLabel="Show entrance code"
+            >
+              <Text style={s.codeBtnIcon}>🔑</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Sim toggle — sits just above 📍. Hidden by default; tap to
               reveal the joystick for manual position simulation. */}
@@ -758,7 +792,9 @@ export default function NavigateScreen() {
 
             {alternativeBuilding ? (
               <>
-                <Text style={s.altTitle}>אין מקלט בטווח</Text>
+                <View style={s.altTitleBanner}>
+                  <Text style={s.altTitle}>⚠️ אין מקלט בטווח</Text>
+                </View>
                 <Text style={s.altAddress}>{alternativeBuilding.address}</Text>
                 {codeVisible ? (
                   <Text style={s.altCode}>קוד כניסה: {alternativeBuilding.entranceCode}</Text>
@@ -835,6 +871,16 @@ const s = StyleSheet.create({
     zIndex: 10,
   },
   simToggleIcon: { fontSize: 22 },
+  // 🔑 entrance-code shortcut — stacked above the sim toggle.
+  codeBtn: {
+    position: 'absolute', bottom: 136, right: 16,
+    backgroundColor: '#fff', borderRadius: 24, width: 48, height: 48,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 4, elevation: 5,
+    zIndex: 10,
+  },
+  codeBtnIcon: { fontSize: 22 },
   // Joystick container — bottom-center so the user can drive with one
   // thumb in the middle of the screen without the corner buttons being
   // hidden by their hand.
@@ -849,7 +895,7 @@ const s = StyleSheet.create({
   // Alternative shelter overlay
   altOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.65)',
     zIndex: 999,
     alignItems: 'center',
     justifyContent: 'center',
@@ -857,18 +903,28 @@ const s = StyleSheet.create({
   },
   altCard: {
     backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 24,
+    borderRadius: 20,
+    overflow: 'hidden',
     width: '100%',
     maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
   },
-  altClose:        { alignSelf: 'flex-end', padding: 4, marginBottom: 4 },
+  altTitleBanner: {
+    backgroundColor: '#e53935',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+  },
+  altClose:        { alignSelf: 'flex-end', padding: 12, marginBottom: 0 },
   altCloseIcon:    { fontSize: 18, color: '#555' },
-  altTitle:        { fontSize: 20, fontWeight: '700', color: '#e53935', textAlign: 'right', marginBottom: 12 },
-  altAddress:      { fontSize: 16, color: '#333', textAlign: 'right', marginBottom: 8 },
-  altCode:         { fontSize: 18, fontWeight: '700', color: '#1a73e8', textAlign: 'right', marginTop: 8 },
-  altExpired:      { fontSize: 14, color: '#999', textAlign: 'right', marginTop: 8 },
-  altInstructions: { fontSize: 15, color: '#333', textAlign: 'right', lineHeight: 24 },
+  altTitle:        { fontSize: 20, fontWeight: '800', color: '#fff', textAlign: 'right' },
+  altAddress:      { fontSize: 16, color: '#666', textAlign: 'right', marginTop: 16, marginHorizontal: 20 },
+  altCode:         { fontSize: 26, fontWeight: '800', color: '#1a73e8', textAlign: 'right', marginTop: 12, marginHorizontal: 20, marginBottom: 20 },
+  altExpired:      { fontSize: 14, color: '#999', textAlign: 'right', marginTop: 12, marginHorizontal: 20, marginBottom: 20 },
+  altInstructions: { fontSize: 15, color: '#333', textAlign: 'right', lineHeight: 24, margin: 20 },
   // HUD
   hud:              { backgroundColor: '#1a73e8', paddingHorizontal: 20, paddingVertical: 16, minHeight: 80, justifyContent: 'center' },
   hudArrived:       { backgroundColor: '#1D9E75' },
