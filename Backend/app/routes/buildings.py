@@ -327,10 +327,7 @@ async def reject_building(registration_id: str, body: ApproveRequest):
                 await send_expo_push(
                     tokens=[token],
                     title="Building Registration Rejected ❌",
-                    body=(
-                        f"Your building registration at {doc.get('address', 'your address')} "
-                        "was not approved. Please contact support for more information."
-                    ),
+                    body="Your building registration request has been rejected. Please contact the admin for more information.",
                     data={"type": "building_rejected", "buildingId": registration_id},
                 )
         except Exception as e:
