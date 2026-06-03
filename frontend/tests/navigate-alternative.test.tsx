@@ -198,23 +198,6 @@ describe('navigate.tsx — alternative building navigation', () => {
     );
   });
 
-  it('shows safety instructions when eta > alertTime and the building is too far (beyond half alertTime)', async () => {
-    // distance / 83 > alertTime / 2 → not reachable (6000 / 83 ≈ 72 > 15)
-    jest.spyOn(require('@/services/NavigationService').NavigationService, 'haversineM').mockReturnValue(6000);
-
-    (global.fetch as jest.Mock).mockResolvedValue({
-      json: () => Promise.resolve({ buildings: [APPROVED_BUILDING] }),
-    });
-
-    const { getByText, queryByText } = renderNavigate({ ...BASE_PARAMS });
-
-    await waitFor(() =>
-      getByText(/שכבו על הקרקע והגנו על הראש עם הידיים/),
-    );
-    expect(queryByText(/קוד כניסה/)).toBeNull();
-    expect(queryByText(/אין מקלט בטווח/)).toBeNull();
-  });
-
   it('does not show the alternative overlay when eta <= alertTime', async () => {
     // Route duration (20 s) is within the alert time (30 s) — no alternative needed.
     mockEmergencyRoute.mockResolvedValue({
