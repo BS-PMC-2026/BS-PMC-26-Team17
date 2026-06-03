@@ -443,7 +443,7 @@ export default function SettingsScreen() {
             </Text>
             <TouchableOpacity
               style={[styles.logoutButton, { marginTop: 10 }]}
-              onPress={cancelRegistration}
+              onPress={() => router.push('/cancel-registration' as any)}
               testID="cancel-building-registration"
             >
               <Text style={styles.logoutButtonText}>Cancel Registration</Text>

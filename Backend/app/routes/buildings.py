@@ -211,6 +211,7 @@ async def approve_building(building_id: str):
 
 class CancelRegistrationRequest(BaseModel):
     user_id: str
+    reason: Optional[str] = None
 
 
 @router.post("/{registration_id}/cancel")
@@ -233,11 +234,12 @@ async def cancel_registration(registration_id: str, body: CancelRegistrationRequ
                 "registrationStatus": "cancelled",
                 "isActive": False,
                 "isVisibleOnMap": False,
+                "cancelReason": (body.reason or "").strip(),
                 "cancelledAt": datetime.now(timezone.utc).isoformat(),
             }
         },
     )
-    return {"message": "Registration cancelled"}
+    return {"message": "Registration cancelled", "id": registration_id}
 
 
 @router.get("")
