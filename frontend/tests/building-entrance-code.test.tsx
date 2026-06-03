@@ -62,7 +62,7 @@ jest.mock('@/services/NavigationService', () => ({
         etaLabel: '2 min', distLabel: '500 m',
       }),
     ),
-    haversineM:           jest.fn(() => 9999),
+    haversineM:           jest.fn(() => 100),
     formatDistance:       (m: number) => `${m} m`,
     formatDuration:       (s: number) => `${s} s`,
     calculateETA:         jest.fn(() => 0),
@@ -117,6 +117,8 @@ const APPROVED_BUILDING = {
   registrationStatus: 'approved',
   address:            'רחוב הרצל 1, תל אביב',
   entranceCode:       '4321',
+  lat:                32.0,
+  lng:                34.7,
 };
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -170,10 +172,10 @@ describe('navigate.tsx — building entrance code display', () => {
       json: () => Promise.resolve({ buildings: [APPROVED_BUILDING] }),
     });
 
-    const { getByText } = renderNavigate({ ...BASE_PARAMS });
+    const { getByText, getAllByText } = renderNavigate({ ...BASE_PARAMS });
 
-    await waitFor(() => getByText('אין מקלט בטווח'));
-    expect(getByText(APPROVED_BUILDING.address)).toBeTruthy();
+    await waitFor(() => getByText(/אין מקלט בטווח/));
+    expect(getAllByText(APPROVED_BUILDING.address).length).toBeGreaterThanOrEqual(1);
     expect(getByText(`קוד כניסה: ${APPROVED_BUILDING.entranceCode}`)).toBeTruthy();
   });
 
@@ -224,6 +226,6 @@ describe('navigate.tsx — building entrance code display', () => {
     );
 
     expect(queryByText(/קוד כניסה/)).toBeNull();
-    expect(queryByText('אין מקלט בטווח')).toBeNull();
+    expect(queryByText(/אין מקלט בטווח/)).toBeNull();
   });
 });

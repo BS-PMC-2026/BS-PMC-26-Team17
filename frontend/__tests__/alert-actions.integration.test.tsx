@@ -137,14 +137,16 @@ const mockAsyncStorage = AsyncStorage as jest.Mocked<typeof AsyncStorage>;
 const mockUseFocusEffect = useFocusEffect as jest.Mock;
 
 // Three shelters: one very close, one further, one closed (must be excluded).
+// Both open shelters must be within 10-min walking range (≤830m at 83mpm)
+// and have capacity > 5 to pass NearbyShelterSheet's isUsable filter.
 const SHELTERS = [
   {
     id: 'near-1', lat: 32.0801, lng: 34.7801,
-    name: 'Near Shelter', address: 'a1', accessStatus: 'open',
+    name: 'Near Shelter', address: 'a1', accessStatus: 'open', capacity: 100,
   },
   {
-    id: 'far-1',  lat: 32.090, lng: 34.781,
-    name: 'Far Shelter',  address: 'a2', accessStatus: 'open',
+    id: 'far-1',  lat: 32.085, lng: 34.781,  // ~562m from user, ETA ~6.8min
+    name: 'Far Shelter',  address: 'a2', accessStatus: 'open', capacity: 100,
   },
   {
     id: 'closed-1', lat: 32.0801, lng: 34.7802, // closer than near-1
