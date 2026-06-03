@@ -64,7 +64,7 @@ jest.mock('@/services/NavigationService', () => ({
         etaLabel: '2 min', distLabel: '500 m',
       }),
     ),
-    haversineM:           (...args: any[]) => mockHaversineM(...args),
+    haversineM:           jest.fn().mockReturnValue(100),
     formatDistance:       (m: number) => `${m} m`,
     formatDuration:       (s: number) => `${s} s`,
     calculateETA:         jest.fn(() => 0),
