@@ -125,8 +125,8 @@ const APPROVED_BUILDING = {
   registrationStatus: 'approved',
   address:            'רחוב הרצל 1, תל אביב',
   entranceCode:       '4321',
-  lat:                32.05,
-  lng:                34.75,
+  lat:                40.0,
+  lng:                40.0,
 };
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -152,6 +152,8 @@ beforeEach(() => {
     }),
   );
 });
+
+afterEach(() => jest.restoreAllMocks());
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -197,8 +199,8 @@ describe('navigate.tsx — alternative building navigation', () => {
   });
 
   it('shows safety instructions when eta > alertTime and the building is too far (beyond half alertTime)', async () => {
-    // distance / 83 > alertTime / 2 → not reachable (2000 / 83 ≈ 24 > 15)
-    mockHaversineM.mockReturnValue(2000);
+    // distance / 83 > alertTime / 2 → not reachable (6000 / 83 ≈ 72 > 15)
+    jest.spyOn(require('@/services/NavigationService').NavigationService, 'haversineM').mockReturnValue(6000);
 
     (global.fetch as jest.Mock).mockResolvedValue({
       json: () => Promise.resolve({ buildings: [APPROVED_BUILDING] }),
