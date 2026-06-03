@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, Linking } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -11,7 +10,7 @@ export default function PdfViewer() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchAndShare = async () => {
+    const fetchAndOpen = async () => {
       try {
         const path = `${FileSystem.cacheDirectory}permit_${buildingId}.pdf`;
         const result = await FileSystem.downloadAsync(
@@ -22,18 +21,14 @@ export default function PdfViewer() {
           setError('Failed to download document');
           return;
         }
-        await Sharing.shareAsync(path, {
-          mimeType: 'application/pdf',
-          UTI: 'com.adobe.pdf',
-          dialogTitle: 'View Permit',
-        });
+        await Linking.openURL(result.uri);
         router.back();
       } catch (e: any) {
         setError(e?.message || 'Could not open document');
       }
     };
 
-    fetchAndShare();
+    fetchAndOpen();
   }, [buildingId]);
 
   return (
