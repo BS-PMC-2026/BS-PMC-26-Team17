@@ -46,9 +46,6 @@ jest.mock('react-native-webview', () => {
   return { WebView: MockWebView };
 });
 
-// mockHaversineM is defined before jest.mock so the factory closure captures it.
-// The factory is evaluated lazily (first require), by which time this is set.
-const mockHaversineM = jest.fn(() => 100);
 
 jest.mock('@/services/NavigationService', () => ({
   NavigationService: {
@@ -116,6 +113,10 @@ const mockEmergencyRoute =
 
 const mockGetAlertTime =
   require('@/services/alertTimes').getAlertTime as jest.Mock;
+
+const mockHaversineM =
+  require('@/services/NavigationService').NavigationService
+    .haversineM as jest.Mock;
 
 // Building used in "reachable" tests.
 // Reachability condition: haversineM(user, building) / 83 <= alertTime / 2
