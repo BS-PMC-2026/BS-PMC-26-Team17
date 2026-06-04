@@ -15,9 +15,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from bson import ObjectId
-import base64 as _b64
 from fastapi import APIRouter, HTTPException, Query, Response
-from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core.database import db
@@ -303,7 +301,7 @@ async def get_registration_file(
         b64_str = b64_str.split(",", 1)[1]
     b64_str = "".join(b64_str.split())  # remove all whitespace
     try:
-        raw = _b64.b64decode(b64_str, validate=False)
+        raw = base64.b64decode(b64_str, validate=False)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not decode file: {e}")
 
