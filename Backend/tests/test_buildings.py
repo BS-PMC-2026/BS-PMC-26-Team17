@@ -132,6 +132,153 @@ async def test_cancel_without_reason(async_client):
         assert payload["cancelReason"] == ""
 
 
+@pytest.mark.asyncio
+async def test_cancel_trims_whitespace_in_reason(async_client):
+    """Surrounding whitespace in `reason` is stripped before storing."""
+    update_mock = AsyncMock()
+    with patch("app.routes.buildings.db") as mock_db:
+        coll = MagicMock()
+        coll.find_one = AsyncMock(return_value=_mock_shelter_doc())
+        coll.update_one = update_mock
+        mock_db.__getitem__.return_value = coll
+
+        response = await async_client.post(
+            f"/buildings/{VALID_OID}/cancel",
+            json={"user_id": USER_ID, "reason": "   Building demolished   "},
+        )
+
+        assert response.status_code == 200
+        payload = update_mock.call_args.args[1]["$set"]
+        assert payload["cancelReason"] == "Building demolished"
+
+
+@pytest.mark.asyncio
+async def test_cancel_flips_all_visibility_flags(async_client):
+    """After cancel: isActive=False, isVisibleOnMap=False, status=cancelled."""
+    update_mock = AsyncMock()
+    with patch("app.routes.buildings.db") as mock_db:
+        coll = MagicMock()
+        # Doc is currently approved + visible — cancel should hide it.
+        coll.find_one = AsyncMock(return_value=_mock_shelter_doc(
+            registrationStatus="approved", isActive=True, isVisibleOnMap=True,
+        ))
+        coll.update_one = update_mock
+        mock_db.__getitem__.return_value = coll
+
+        response = await async_client.post(
+            f"/buildings/{VALID_OID}/cancel",
+            json={"user_id": USER_ID},
+        )
+
+        assert response.status_code == 200
+        payload = update_mock.call_args.args[1]["$set"]
+        assert payload["registrationStatus"] == "cancelled"
+        assert payload["isActive"] is False
+        assert payload["isVisibleOnMap"] is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_stamps_cancelled_at(async_client):
+    """`cancelledAt` is an ISO timestamp on the doc after cancel."""
+    update_mock = AsyncMock()
+    with patch("app.routes.buildings.db") as mock_db:
+        coll = MagicMock()
+        coll.find_one = AsyncMock(return_value=_mock_shelter_doc())
+        coll.update_one = update_mock
+        mock_db.__getitem__.return_value = coll
+
+        response = await async_client.post(
+            f"/buildings/{VALID_OID}/cancel",
+            json={"user_id": USER_ID},
+        )
+
+        assert response.status_code == 200
+        ts = update_mock.call_args.args[1]["$set"]["cancelledAt"]
+        # ISO format like "2026-06-03T12:34:56.789012+00:00"
+        assert isinstance(ts, str) and "T" in ts and len(ts) >= 19
+
+
+@pytest.mark.asyncio
+async def test_cancel_response_includes_id(async_client):
+    """The response body echoes the cancelled registration id (for logging)."""
+    with patch("app.routes.buildings.db") as mock_db:
+        coll = MagicMock()
+        coll.find_one = AsyncMock(return_value=_mock_shelter_doc())
+        coll.update_one = AsyncMock()
+        mock_db.__getitem__.return_value = coll
+
+        response = await async_client.post(
+            f"/buildings/{VALID_OID}/cancel",
+            json={"user_id": USER_ID},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == VALID_OID
+        assert body["message"] == "Registration cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_long_reason_is_accepted(async_client):
+    """Long free-text reasons are stored as-is (no truncation)."""
+    long_reason = "A" * 5000
+    update_mock = AsyncMock()
+    with patch("app.routes.buildings.db") as mock_db:
+        coll = MagicMock()
+        coll.find_one = AsyncMock(return_value=_mock_shelter_doc())
+        coll.update_one = update_mock
+        mock_db.__getitem__.return_value = coll
+
+        response = await async_client.post(
+            f"/buildings/{VALID_OID}/cancel",
+            json={"user_id": USER_ID, "reason": long_reason},
+        )
+
+        assert response.status_code == 200
+        assert update_mock.call_args.args[1]["$set"]["cancelReason"] == long_reason
+
+
+@pytest.mark.asyncio
+async def test_cancel_then_my_returns_null(async_client):
+    """After cancellation, GET /buildings/my/<user> should report no registration."""
+    with patch("app.routes.buildings.db") as mock_db:
+        coll = MagicMock()
+        # First call (cancel handler): returns the doc.
+        # Second call (my handler with $ne cancelled): returns None.
+        coll.find_one = AsyncMock(side_effect=[_mock_shelter_doc(), None])
+        coll.update_one = AsyncMock()
+        mock_db.__getitem__.return_value = coll
+
+        cancel_resp = await async_client.post(
+            f"/buildings/{VALID_OID}/cancel",
+            json={"user_id": USER_ID},
+        )
+        assert cancel_resp.status_code == 200
+
+        my_resp = await async_client.get(f"/buildings/my/{USER_ID}")
+        assert my_resp.status_code == 200
+        assert my_resp.json() == {"registration": None}
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejects_wrong_owner_even_for_approved_doc(async_client):
+    """Ownership check fires regardless of registration status."""
+    with patch("app.routes.buildings.db") as mock_db:
+        coll = MagicMock()
+        coll.find_one = AsyncMock(return_value=_mock_shelter_doc(
+            registrationStatus="approved",
+        ))
+        coll.update_one = AsyncMock()
+        mock_db.__getitem__.return_value = coll
+
+        response = await async_client.post(
+            f"/buildings/{VALID_OID}/cancel",
+            json={"user_id": OTHER_USER_ID, "reason": "trying to sabotage"},
+        )
+
+        assert response.status_code == 403
+
+
 # ---------------------------------------------------------------------------
 # my/{user_id}
 # ---------------------------------------------------------------------------
