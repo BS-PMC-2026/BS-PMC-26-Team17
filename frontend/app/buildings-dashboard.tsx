@@ -1,13 +1,12 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Alert, Modal, Pressable,
+  ActivityIndicator, Alert, Modal, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
 import { WebView } from 'react-native-webview';
-import { Platform } from 'react-native';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -90,6 +89,9 @@ export default function BuildingsDashboard() {
     }
   };
 
+  // `load` is intentionally not in the deps — it changes every render and
+  // we only want to re-fetch when admin status flips.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (isAdmin) load(); }, [isAdmin]);
 
   const approve = async (building: Building) => {
