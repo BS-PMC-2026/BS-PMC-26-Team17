@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -36,8 +36,6 @@ type NominatimResult = {
     municipality?: string;
   };
 };
-
-type AddressPick = { label: string; lat: number; lng: number };
 
 // Format a Nominatim result as "Street [number], City". Falls back to
 // display_name's first two segments if the structured fields are missing.
@@ -119,42 +117,8 @@ export default function SettingsScreen() {
     }, [user?.id]),
   );
 
-  // Cancel building registration (BSPMT17-374)
-  const cancelRegistration = () => {
-    if (!myRegistration || !user?.id) return;
-    Alert.alert(
-      'Cancel registration?',
-      'Your building registration will be cancelled. You can register again later.',
-      [
-        { text: 'Keep', style: 'cancel' },
-        {
-          text: 'Cancel registration',
-          style: 'destructive',
-          onPress: async () => {
-            const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
-            try {
-              const res = await fetch(
-                `${API_URL}/buildings/${myRegistration.id}/cancel`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ user_id: user.id }),
-                },
-              );
-              if (!res.ok) {
-                const j = await res.json().catch(() => ({}));
-                Alert.alert('Failed', j.detail || 'Could not cancel');
-                return;
-              }
-              setMyRegistration(null);
-            } catch (e: any) {
-              Alert.alert('Network error', String(e?.message || e));
-            }
-          },
-        },
-      ],
-    );
-  };
+  // Cancel-registration UI now lives on its own screen (cancel-registration.tsx).
+  // The Settings button just navigates there.
 
   // Debounced Nominatim search whenever the user types in the address field
   const onAddressChange = (text: string) => {
@@ -443,7 +407,7 @@ export default function SettingsScreen() {
             </Text>
             <TouchableOpacity
               style={[styles.logoutButton, { marginTop: 10 }]}
-              onPress={cancelRegistration}
+              onPress={() => router.push('/cancel-registration' as any)}
               testID="cancel-building-registration"
             >
               <Text style={styles.logoutButtonText}>Cancel Registration</Text>

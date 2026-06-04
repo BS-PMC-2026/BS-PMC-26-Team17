@@ -2,6 +2,22 @@ import React from 'react';
 import { Alert, ActivityIndicator } from 'react-native';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 
+// Mock react-native-webview BEFORE importing the screen — the in-app PDF
+// viewer uses <WebView> which would otherwise crash the Jest runtime with
+// "RNCWebViewModule could not be found".
+jest.mock('react-native-webview', () => {
+  const ReactMock = require('react');
+  const { View } = require('react-native');
+  const MockWebView = ReactMock.forwardRef((props: any, ref: any) => {
+    ReactMock.useImperativeHandle(ref, () => ({
+      postMessage: jest.fn(),
+      injectJavaScript: jest.fn(),
+    }));
+    return <View testID="building-doc-webview" {...props} />;
+  });
+  return { WebView: MockWebView };
+});
+
 import BuildingsDashboard from '../app/buildings-dashboard';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────

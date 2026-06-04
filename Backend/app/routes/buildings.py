@@ -15,8 +15,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from app.core.database import db
@@ -101,12 +100,24 @@ async def register_building(body: BuildingRegistrationRequest):
         )
 
     # Confirm the user lives at the address they are trying to register.
+    # Lenient match: every non-trivial token of the building address (street
+    # name parts + house number) must appear in the user's profile address.
+    # That way "65 רוטנברג" matches "רוטנברג 65, באר שבע" regardless of
+    # ordering or whether a city is appended.
     user = await db["User"].find_one({"_id": ObjectId(body.user_id)})
     user_address = (user.get("address") or "").strip().lower() if user else ""
-    if user_address != body.address.strip().lower():
+    building_tokens = [
+        t for t in body.address.strip().lower().replace(",", " ").split()
+        if len(t) >= 2
+    ]
+    if not user_address or not all(t in user_address for t in building_tokens):
         raise HTTPException(
             status_code=400,
-            detail="You can only register a building where you live",
+            detail=(
+                "You can only register a building where you live. "
+                f"Your profile address is '{user_address}', "
+                f"building address is '{body.address}'."
+            ),
         )
 
     shelter_name = f"{body.address} - {body.shelterLocation}".strip(" -")
@@ -195,6 +206,7 @@ async def get_my_registration(user_id: str):
 
 class CancelRegistrationRequest(BaseModel):
     user_id: str
+    reason: Optional[str] = None
 
 
 @router.post("/{registration_id}/cancel")
@@ -217,11 +229,12 @@ async def cancel_registration(registration_id: str, body: CancelRegistrationRequ
                 "registrationStatus": "cancelled",
                 "isActive": False,
                 "isVisibleOnMap": False,
+                "cancelReason": (body.reason or "").strip(),
                 "cancelledAt": datetime.now(timezone.utc).isoformat(),
             }
         },
     )
-    return {"message": "Registration cancelled"}
+    return {"message": "Registration cancelled", "id": registration_id}
 
 
 @router.get("")
@@ -254,38 +267,75 @@ async def list_buildings(user_id: str = Query(...)):
             "managerUserId":          manager_id,
             "managerName":            manager_name,
             "registrationFileName":   doc.get("registrationFileName"),
-            "registrationFileBase64": doc.get("registrationFileBase64"),
+            # The base64 blob is intentionally NOT included here — list
+            # responses stay small. Use GET /buildings/{id}/file to fetch.
+            "hasFile":                bool(doc.get("registrationFileBase64")),
         })
     return {"buildings": buildings}
 
 
-@router.get("/{building_id}/permit")
-async def get_building_permit(building_id: str):
-    """Return the registration permit PDF for a building."""
+@router.get("/{registration_id}/file")
+async def get_registration_file(
+    registration_id: str,
+    user_id: str = Query(...),
+):
+    """Admin-only: stream the uploaded permit/document so the dashboard
+    can hand the URL to Linking.openURL (iOS Safari / Android viewer
+    will render PDFs natively).
+    """
+    if not await _is_admin(user_id):
+        raise HTTPException(status_code=403, detail="Admin access required")
     try:
-        oid = ObjectId(building_id)
+        oid = ObjectId(registration_id)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid building id")
+        raise HTTPException(status_code=400, detail="Invalid id")
 
     doc = await db["ShelterTest"].find_one({"_id": oid})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Building not found")
+    if not doc or not doc.get("registrationFileBase64"):
+        raise HTTPException(status_code=404, detail="File not found")
 
-    file_base64 = doc.get("registrationFileBase64")
-    file_name   = doc.get("registrationFileName") or "permit.pdf"
-
-    if not file_base64:
-        raise HTTPException(status_code=404, detail="No permit document available")
-
+    b64_str = doc["registrationFileBase64"] or ""
+    # Some clients add whitespace / data-url prefix that breaks decode.
+    # Strip both defensively so the decode never fails.
+    if "," in b64_str and b64_str.lstrip().startswith("data:"):
+        b64_str = b64_str.split(",", 1)[1]
+    b64_str = "".join(b64_str.split())  # remove all whitespace
     try:
-        pdf_bytes = base64.b64decode(file_base64)
-    except Exception:
-        raise HTTPException(status_code=422, detail="Stored permit document is not valid base64")
+        raw = base64.b64decode(b64_str, validate=False)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not decode file: {e}")
 
+    name = doc.get("registrationFileName") or "document"
+    # Diagnostic: confirm we got real binary out and the magic bytes match.
+    head = raw[:8]
+    print(
+        f"[buildings/file] id={registration_id} "
+        f"b64_len={len(b64_str)} bytes={len(raw)} "
+        f"name={name!r} head={head!r}"
+    )
+    ext = (name.rsplit(".", 1)[-1] if "." in name else "").lower()
+    ctype = {
+        "pdf":  "application/pdf",
+        "png":  "image/png",
+        "jpg":  "image/jpeg",
+        "jpeg": "image/jpeg",
+    }.get(ext, "application/octet-stream")
+
+    # HTTP headers must be latin-1. Hebrew (or any non-ASCII) filenames need
+    # RFC 5987 encoding. We send both an ASCII-safe `filename=` and the
+    # percent-encoded UTF-8 `filename*=` so all clients pick the right one.
+    from urllib.parse import quote
+    ascii_name = name.encode("ascii", "ignore").decode("ascii") or "document"
+    if "." in name and "." not in ascii_name:
+        ascii_name = f"document.{ext}" if ext else "document"
+    content_disposition = (
+        f'inline; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(name)}"
+    )
     return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(file_name)}"},
+        content=raw,
+        media_type=ctype,
+        headers={"Content-Disposition": content_disposition},
     )
 
 

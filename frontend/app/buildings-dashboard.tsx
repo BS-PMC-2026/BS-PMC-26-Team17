@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Alert, Modal, Pressable,
+  ActivityIndicator, Alert, Modal, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
+import { WebView } from 'react-native-webview';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -17,9 +18,10 @@ type Building = {
   managerUserId?: string;
   registrationStatus: 'pending' | 'approved' | 'rejected';
   entranceCode?: string;
-  fileUrl?: string;
-  fileName?: string;
-  registrationFileBase64?: string;
+  // Server now sends a `hasFile` boolean + the filename only. The actual
+  // bytes are fetched on demand via GET /buildings/{id}/file.
+  hasFile?: boolean;
+  registrationFileName?: string;
   apartmentCount?: number;
   shelterLocation?: string;
   neighborhood?: string;
@@ -71,6 +73,8 @@ export default function BuildingsDashboard() {
 
   // Detail modal
   const [selected, setSelected]   = useState<Building | null>(null);
+  // The building whose document is being viewed in the in-app PDF modal.
+  const [viewing,  setViewing]    = useState<Building | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -85,6 +89,9 @@ export default function BuildingsDashboard() {
     }
   };
 
+  // `load` is intentionally not in the deps — it changes every render and
+  // we only want to re-fetch when admin status flips.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (isAdmin) load(); }, [isAdmin]);
 
   const approve = async (building: Building) => {
@@ -165,15 +172,25 @@ export default function BuildingsDashboard() {
   };
 
   const openForm = (building: Building) => {
-    if (!building.id) {
-      Alert.alert('No document available');
+    if (!building.hasFile) {
+      Alert.alert('No document', 'No permit document was uploaded for this building.');
       return;
     }
-    router.push({
-      pathname: '/pdf-viewer',
-      params: { buildingId: building.id, name: building.fileName ?? 'permit' },
-    });
+    setSelected(null); // close the detail modal so the viewer takes over
+    setViewing(building);
   };
+
+  // URL of the document for the in-app viewer. Android WebView can't render
+  // PDFs natively, so we wrap them with Google Docs viewer there.
+  const viewerUrl = (() => {
+    if (!viewing) return '';
+    const raw = `${API_URL}/buildings/${viewing.id}/file?user_id=${user?.id}`;
+    const isPdf = (viewing.registrationFileName || '').toLowerCase().endsWith('.pdf');
+    if (Platform.OS === 'android' && isPdf) {
+      return `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(raw)}`;
+    }
+    return raw;
+  })();
 
   const filtered = useMemo(() => {
     if (filter === 'All') return buildings;
@@ -389,9 +406,56 @@ export default function BuildingsDashboard() {
           </ScrollView>
         </View>
       </Modal>
+
+      {/* In-app document viewer (PDFs / images) */}
+      <Modal
+        visible={!!viewing}
+        animationType="slide"
+        onRequestClose={() => setViewing(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: '#181818', paddingTop: insets.top }}>
+          <View style={pdfStyles.header}>
+            <TouchableOpacity onPress={() => setViewing(null)} style={pdfStyles.backBtn}>
+              <Text style={pdfStyles.backIcon}>‹</Text>
+              <Text style={pdfStyles.backTxt}>Back</Text>
+            </TouchableOpacity>
+          </View>
+          {viewing && (
+            <WebView
+              source={{ uri: viewerUrl }}
+              style={{ flex: 1, backgroundColor: '#fff' }}
+              originWhitelist={['*']}
+              startInLoadingState
+              renderLoading={() => (
+                <View style={pdfStyles.loading}>
+                  <ActivityIndicator size="large" color="#0a7ea4" />
+                </View>
+              )}
+            />
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
+
+const pdfStyles = StyleSheet.create({
+  header: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 10,
+    backgroundColor: '#222',
+  },
+  backBtn: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 10,
+  },
+  backIcon: { color: '#1a73e8', fontSize: 28, lineHeight: 30, marginTop: -2, marginRight: 4 },
+  backTxt: { color: '#1a73e8', fontSize: 16, fontWeight: '700' },
+  loading: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff',
+  },
+});
 
 const s = StyleSheet.create({
   container:      { flex: 1, backgroundColor: '#181818', padding: 14, paddingTop: 1 },
