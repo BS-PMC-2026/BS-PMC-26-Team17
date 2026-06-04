@@ -32,6 +32,9 @@ export type SheetShelter = {
   capacity?: number;
   reservedPlaces?: number;
   actualOccupancy?: number;
+  isAccessible?: boolean;
+  petIssueReported?: boolean;
+  demographicPotential?: number;
 };
 
 type Props = {
@@ -50,16 +53,39 @@ type Props = {
   limit?: number;
   /** Initial value for the group-size stepper. Default 1. */
   initialGroupSize?: number;
+  /** Number of children in the group — slows walking speed. */
+  childrenCount?: number;
+  /** Whether the user requires an accessible shelter. */
+  isAccessible?: boolean;
+  /** Whether the user has pets — filters out shelters with pet issues. */
+  hasPets?: boolean;
+  /** Transport mode: 'driving' | 'cycling' | 'foot'. Default 'foot'. */
+  mobilityType?: string;
+  /** Called when no shelters pass all filters — parent can show alternatives. */
+  onNoShelters?: () => void;
 };
 
-function isUsable(s: SheetShelter): boolean {
+function isUsable(
+  s: SheetShelter,
+  needsAccessible: boolean,
+  hasPets: boolean,
+): boolean {
   if (s.accessStatus === 'closed' || s.accessStatus === 'locked') return false;
   if (s.shouldBeOpen === false) return false;
+  if (needsAccessible && !s.isAccessible) return false;
+  if (hasPets && s.petIssueReported !== false) return false;
+  const available = (s.capacity ?? 0) - (s.reservedPlaces ?? 0) - (s.actualOccupancy ?? 0);
+  if (available <= 5) return false;
   return true;
 }
 
+const BASE_SPEED_MPM = 83; // metres per minute — average walking pace
+const MAX_ETA_MINUTES = 10;
+
 export default function NearbyShelterSheet({
   visible, onClose, onPick, shelters, userLocation, limit = 10, initialGroupSize = 1,
+  childrenCount = 0, isAccessible = false, hasPets = false, mobilityType = 'foot',
+  onNoShelters,
 }: Props) {
   // Local stepper state — reset to `initialGroupSize` every time the sheet
   // opens so a user opening it twice doesn't see a stale count.
@@ -68,22 +94,61 @@ export default function NearbyShelterSheet({
     if (visible) setGroupSize(initialGroupSize);
   }, [visible, initialGroupSize]);
 
-  // Compute the sorted list once per render. Cheap (≤ a few hundred items),
-  // so no memo on the inputs is needed — but we still wrap in useMemo to
-  // avoid re-sorting on unrelated parent re-renders.
+  const speedMultiplier = useMemo(() => {
+    if (mobilityType === 'driving') return 8;
+    if (mobilityType === 'cycling') return 2.5;
+    if (isAccessible) return 0.6;
+    if (childrenCount > 0) return 0.7;
+    return 1;
+  }, [mobilityType, isAccessible, childrenCount]);
+
+  console.log('[NearbyShelterSheet]', { speedMultiplier, childrenCount, isAccessible, hasPets, mobilityType });
+
   const sorted = useMemo(() => {
     if (!userLocation) return [];
-    return shelters
-      .filter(isUsable)
-      .map(s => ({
-        s,
-        distM: NavigationService.haversineM(userLocation, {
-          latitude: s.latitude, longitude: s.longitude,
-        }),
-      }))
+
+    // Step 1: basic usability + accessibility + pet + capacity filters
+    const usable = shelters.filter(s => isUsable(s, isAccessible, hasPets));
+    console.log('[NearbyShelterSheet sorted] total:', shelters.length, '→ after isUsable:', usable.length);
+
+    // Step 2: ETA filter — only shelters reachable within MAX_ETA_MINUTES
+    const withEta = usable.map(s => ({
+      s,
+      distM: NavigationService.haversineM(userLocation, { latitude: s.latitude, longitude: s.longitude }),
+    })).filter(({ distM }) => distM / (BASE_SPEED_MPM * speedMultiplier) <= MAX_ETA_MINUTES);
+    console.log('[NearbyShelterSheet sorted] → after ETA filter:', withEta.length);
+
+    // Step 3: demographic balancing — group by address, compute per-shelter quota
+    const byAddress = new Map<string, SheetShelter[]>();
+    withEta.forEach(({ s }) => {
+      const key = s.address || 'unknown';
+      if (!byAddress.has(key)) byAddress.set(key, []);
+      byAddress.get(key)!.push(s);
+    });
+
+    const demoFiltered = withEta.filter(({ s }) => {
+      const streetGroup = byAddress.get(s.address || 'unknown') ?? [];
+      const totalCap = streetGroup.reduce((sum, x) => sum + (x.capacity ?? 0), 0);
+      if (totalCap === 0 || !s.demographicPotential) return true;
+      const quota = ((s.capacity ?? 0) / totalCap) * s.demographicPotential;
+      return (s.reservedPlaces ?? 0) < quota * 0.9;
+    });
+    console.log('[NearbyShelterSheet sorted] → after demographic balancing:', demoFiltered.length);
+
+    return demoFiltered
       .sort((a, b) => a.distM - b.distM)
       .slice(0, limit);
-  }, [shelters, userLocation, limit]);
+  }, [shelters, userLocation, limit, isAccessible, hasPets, speedMultiplier]);
+
+  useEffect(() => {
+    console.log('[NearbyShelterSheet] onNoShelters check:', sorted.length, visible, userLocation !== null);
+    if (visible && userLocation && sorted.length === 0) {
+      console.log('[NearbyShelterSheet] onNoShelters triggered', { sortedLength: sorted.length, isVisible: visible, userLocation });
+      onNoShelters?.();
+    }
+  }, [visible, sorted.length, userLocation]);
+
+  console.log('[NearbyShelterSheet] rendering:', sorted.length, 'shelters, first:', sorted[0]?.s ?? null);
 
   return (
     <Modal

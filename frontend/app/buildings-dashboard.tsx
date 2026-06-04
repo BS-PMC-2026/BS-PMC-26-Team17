@@ -23,6 +23,9 @@ type Building = {
   // bytes are fetched on demand via GET /buildings/{id}/file.
   hasFile?: boolean;
   registrationFileName?: string;
+  fileUrl?: string;
+  fileName?: string;
+  registrationFileBase64?: string;
   apartmentCount?: number;
   shelterLocation?: string;
   neighborhood?: string;
