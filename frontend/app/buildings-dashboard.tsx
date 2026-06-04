@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Alert, Modal, Pressable, Linking,
+  ActivityIndicator, Alert, Modal, Pressable,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -19,6 +19,7 @@ type Building = {
   entranceCode?: string;
   fileUrl?: string;
   fileName?: string;
+  registrationFileBase64?: string;
   apartmentCount?: number;
   shelterLocation?: string;
   neighborhood?: string;
@@ -164,13 +165,14 @@ export default function BuildingsDashboard() {
   };
 
   const openForm = (building: Building) => {
-    if (building.fileUrl) {
-      Linking.openURL(building.fileUrl).catch(() =>
-        Alert.alert('Error', 'Could not open document URL')
-      );
-    } else {
-      Alert.alert('No document', 'No permit document was uploaded for this building.');
+    if (!building.id) {
+      Alert.alert('No document available');
+      return;
     }
+    router.push({
+      pathname: '/pdf-viewer',
+      params: { buildingId: building.id, name: building.fileName ?? 'permit' },
+    });
   };
 
   const filtered = useMemo(() => {

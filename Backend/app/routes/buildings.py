@@ -8,12 +8,15 @@ until an admin approves it via the existing Shelter Dashboard.
 Auth pattern follows ``reports.py``: ``user_id`` is passed explicitly in the
 body / path, no FastAPI ``Depends`` is used.
 """
+import base64
 import re
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import quote
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core.database import db
@@ -254,6 +257,36 @@ async def list_buildings(user_id: str = Query(...)):
             "registrationFileBase64": doc.get("registrationFileBase64"),
         })
     return {"buildings": buildings}
+
+
+@router.get("/{building_id}/permit")
+async def get_building_permit(building_id: str):
+    """Return the registration permit PDF for a building."""
+    try:
+        oid = ObjectId(building_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid building id")
+
+    doc = await db["ShelterTest"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    file_base64 = doc.get("registrationFileBase64")
+    file_name   = doc.get("registrationFileName") or "permit.pdf"
+
+    if not file_base64:
+        raise HTTPException(status_code=404, detail="No permit document available")
+
+    try:
+        pdf_bytes = base64.b64decode(file_base64)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Stored permit document is not valid base64")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(file_name)}"},
+    )
 
 
 class ApproveRequest(BaseModel):
