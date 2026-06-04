@@ -15,6 +15,7 @@ const mk = (overrides: Partial<SheetShelter>): SheetShelter => ({
   latitude: 32.080,
   longitude: 34.781,
   accessStatus: 'open',
+  capacity: 100,   // ensure available spots > 5 so capacity filter passes
   ...overrides,
 });
 
@@ -51,15 +52,19 @@ describe('NearbyShelterSheet', () => {
   });
 
   it('sorts shelters by distance ascending', () => {
+    // All within 10-min walking range (~830m max at 83mpm):
+    //   nearby  (32.080, 34.781) → ~90m   (~1 min)
+    //   medium  (32.083, 34.781) → ~345m  (~4 min)
+    //   far     (32.086, 34.781) → ~672m  (~8 min)
     const { getAllByTestId } = render(
       <NearbyShelterSheet
         visible
         onClose={jest.fn()}
         onPick={jest.fn()}
         shelters={[
-          mk({ id: 'far',     latitude: 32.20,  longitude: 34.78 }),
-          mk({ id: 'nearby',  latitude: 32.080, longitude: 34.781 }),
-          mk({ id: 'medium',  latitude: 32.090, longitude: 34.781 }),
+          mk({ id: 'far',    latitude: 32.086, longitude: 34.781 }),
+          mk({ id: 'nearby', latitude: 32.080, longitude: 34.781 }),
+          mk({ id: 'medium', latitude: 32.083, longitude: 34.781 }),
         ]}
         userLocation={USER}
       />,

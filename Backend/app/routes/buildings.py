@@ -160,6 +160,22 @@ async def check_address(address: str, city: str = ""):
     }
 
 
+@router.get("/approved")
+async def list_approved_buildings(lat: Optional[float] = Query(None), lng: Optional[float] = Query(None)):
+    """Return all approved buildings with their entrance codes."""
+    cursor = db["ShelterTest"].find({"registrationStatus": "approved"})
+    buildings = []
+    async for doc in cursor:
+        buildings.append({
+            "id":           str(doc["_id"]),
+            "address":      doc.get("address", ""),
+            "entranceCode": doc.get("entranceCode", ""),
+            "lat":          doc.get("lat"),
+            "lng":          doc.get("lng"),
+        })
+    return {"buildings": buildings}
+
+
 @router.get("/my/{user_id}")
 async def get_my_registration(user_id: str):
     doc = await db["ShelterTest"].find_one(
@@ -172,41 +188,6 @@ async def get_my_registration(user_id: str):
         return {"registration": None}
     doc.pop("registrationFileBase64", None)
     return {"registration": _serialize(doc)}
-
-
-@router.patch("/{building_id}/approve")
-async def approve_building(building_id: str):
-    try:
-        oid = ObjectId(building_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid building id")
-
-    doc = await db["ShelterTest"].find_one({"_id": oid})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Building not found")
-
-    await db["ShelterTest"].update_one(
-        {"_id": oid},
-        {
-            "$set": {
-                "registrationStatus": "approved",
-                "isActive": True,
-                "isVisibleOnMap": True,
-                "approvedAt": datetime.now(timezone.utc).isoformat(),
-            }
-        },
-    )
-
-    # Grant arnona discount to all residents of this building.
-    building_address = (doc.get("address") or "").strip()
-    if building_address:
-        addr_pattern = re.escape(building_address)
-        await db["User"].update_many(
-            {"address": {"$regex": addr_pattern, "$options": "i"}},
-            {"$set": {"isArnonaDiscount": True}},
-        )
-
-    return {"message": "Building approved"}
 
 
 class CancelRegistrationRequest(BaseModel):

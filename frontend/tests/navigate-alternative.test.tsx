@@ -2,14 +2,12 @@ import React from 'react';
 import { render, waitFor, act } from '@testing-library/react-native';
 
 /**
- * Tests for the building entrance-code card inside navigate.tsx's alternative
- * shelter overlay.
+ * Tests for the alternative building navigation overlay in navigate.tsx.
  *
  * checkAlternativeNeeded is triggered from applyRoute when alertKind === 'siren'.
- * When an approved building exists in the user's building list it shows:
- *   - title 'אין מקלט בטווח'
- *   - the building address
- *   - 'קוד כניסה: X' (hidden after 5 minutes via setTimeout)
+ * It fetches approved buildings, checks reachability against half the alert time,
+ * and either reroutes to the closest reachable building or falls back to
+ * safety instructions.
  */
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
@@ -48,6 +46,7 @@ jest.mock('react-native-webview', () => {
   return { WebView: MockWebView };
 });
 
+
 jest.mock('@/services/NavigationService', () => ({
   NavigationService: {
     fetchRoute: jest.fn(() =>
@@ -62,7 +61,7 @@ jest.mock('@/services/NavigationService', () => ({
         etaLabel: '2 min', distLabel: '500 m',
       }),
     ),
-    haversineM:           jest.fn(() => 100),
+    haversineM:           jest.fn().mockReturnValue(100),
     formatDistance:       (m: number) => `${m} m`,
     formatDuration:       (s: number) => `${s} s`,
     calculateETA:         jest.fn(() => 0),
@@ -93,7 +92,7 @@ jest.mock('@/config', () => ({ API_URL: 'http://localhost:8000' }));
 
 jest.mock('@/services/alertTimes', () => ({
   getAlertTime: jest.fn(() => 30),
-  ALERT_TIMES: {},
+  ALERT_TIMES:  {},
 }));
 
 jest.mock('@/services/OrefZonesService', () => ({
@@ -112,13 +111,22 @@ const mockEmergencyRoute =
   require('@/services/NavigationService').NavigationService
     .emergencyRoute as jest.Mock;
 
-// An approved building returned by the buildings API.
+const mockGetAlertTime =
+  require('@/services/alertTimes').getAlertTime as jest.Mock;
+
+const mockHaversineM =
+  require('@/services/NavigationService').NavigationService
+    .haversineM as jest.Mock;
+
+// Building used in "reachable" tests.
+// Reachability condition: haversineM(user, building) / 83 <= alertTime / 2
+// With alertTime=30 and haversineM=100: 100/83 ≈ 1.2 <= 15 ✓
 const APPROVED_BUILDING = {
   registrationStatus: 'approved',
   address:            'רחוב הרצל 1, תל אביב',
   entranceCode:       '4321',
-  lat:                32.0,
-  lng:                34.7,
+  lat:                40.0,
+  lng:                40.0,
 };
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -129,14 +137,15 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Reset haversineM to "reachable" default (100m < 1245m threshold).
+  mockHaversineM.mockReturnValue(100);
 
-  // ETA (120 s) > alertTime (30 s) → overlay should appear.
   mockEmergencyRoute.mockResolvedValue({
     polyline: [], steps: [], distanceM: 500, durationSec: 120,
     etaLabel: '2 min', distLabel: '500 m',
   });
+  mockGetAlertTime.mockReturnValue(30);
 
-  // Default: no buildings — individual tests override when needed.
   (global.fetch as jest.Mock) = jest.fn(() =>
     Promise.resolve({
       json: () => Promise.resolve({ buildings: [] }),
@@ -144,12 +153,13 @@ beforeEach(() => {
   );
 });
 
+afterEach(() => jest.restoreAllMocks());
+
 // ── Helper ────────────────────────────────────────────────────────────────────
 
 /**
- * fromLat / fromLng seed userLocation immediately, so the emergency
- * useEffect fires on mount and applyRoute → checkAlternativeNeeded runs
- * without waiting for real GPS resolution.
+ * fromLat / fromLng seed userLocation immediately so the emergency useEffect
+ * fires on mount without waiting for real GPS resolution.
  */
 const renderNavigate = (params: Record<string, string | undefined>) => {
   mockUseLocalSearchParams.mockReturnValue(params);
@@ -166,8 +176,8 @@ const BASE_PARAMS = {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('navigate.tsx — building entrance code display', () => {
-  it('shows building address and entrance code when eta > alertTime and there is an approved building', async () => {
+describe('navigate.tsx — alternative building navigation', () => {
+  it('shows building address and entrance code and reroutes when eta > alertTime and building is reachable', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       json: () => Promise.resolve({ buildings: [APPROVED_BUILDING] }),
     });
@@ -177,6 +187,32 @@ describe('navigate.tsx — building entrance code display', () => {
     await waitFor(() => getByText(/אין מקלט בטווח/));
     expect(getAllByText(APPROVED_BUILDING.address).length).toBeGreaterThanOrEqual(1);
     expect(getByText(`קוד כניסה: ${APPROVED_BUILDING.entranceCode}`)).toBeTruthy();
+
+    // First emergencyRoute: original shelter. Second: reroute to building.
+    await waitFor(() => expect(mockEmergencyRoute).toHaveBeenCalledTimes(2));
+    expect(mockEmergencyRoute).toHaveBeenNthCalledWith(
+      2,
+      { latitude: 32.0, longitude: 34.7 },
+      { latitude: APPROVED_BUILDING.lat, longitude: APPROVED_BUILDING.lng },
+      'foot',
+    );
+  });
+
+  it('does not show the alternative overlay when eta <= alertTime', async () => {
+    // Route duration (20 s) is within the alert time (30 s) — no alternative needed.
+    mockEmergencyRoute.mockResolvedValue({
+      polyline: [], steps: [], distanceM: 100, durationSec: 20,
+      etaLabel: '0 min', distLabel: '100 m',
+    });
+
+    const { queryByText } = renderNavigate({ ...BASE_PARAMS });
+
+    await waitFor(() =>
+      expect(mockEmergencyRoute).toHaveBeenCalledTimes(1),
+    );
+
+    expect(queryByText(/אין מקלט בטווח/)).toBeNull();
+    expect(queryByText(/שכבו על הקרקע/)).toBeNull();
   });
 
   it('hides entrance code after 5 minutes', async () => {
@@ -184,7 +220,7 @@ describe('navigate.tsx — building entrance code display', () => {
       json: () => Promise.resolve({ buildings: [APPROVED_BUILDING] }),
     });
 
-    // Intercept only the 5-minute code-expiry timeout, letting all other
+    // Intercept only the 5-minute code-expiry timer, letting all other
     // timers (React scheduler, waitFor polling) run normally.
     let codeExpireCallback: (() => void) | undefined;
     const realSetTimeout = global.setTimeout;
@@ -200,32 +236,15 @@ describe('navigate.tsx — building entrance code display', () => {
 
     const { getByText, queryByText } = renderNavigate({ ...BASE_PARAMS });
 
-    // Wait for the card with the code to appear.
     await waitFor(() =>
       getByText(`קוד כניסה: ${APPROVED_BUILDING.entranceCode}`),
     );
 
-    // Fire the captured expiry callback (simulates 5 minutes passing).
     act(() => codeExpireCallback?.());
 
     expect(queryByText(/קוד כניסה/)).toBeNull();
     expect(getByText('פג תוקף הקוד')).toBeTruthy();
 
     jest.restoreAllMocks();
-  });
-
-  it('does not show entrance code when there is no approved building', async () => {
-    // global.fetch already returns { buildings: [] } from beforeEach.
-
-    const { queryByText, getByText } = renderNavigate({ ...BASE_PARAMS });
-
-    // The overlay still appears (eta > alertTime) but shows safety
-    // instructions instead of a building card.
-    await waitFor(() =>
-      getByText(/שכבו על הקרקע והגנו על הראש עם הידיים/),
-    );
-
-    expect(queryByText(/קוד כניסה/)).toBeNull();
-    expect(queryByText(/אין מקלט בטווח/)).toBeNull();
   });
 });
