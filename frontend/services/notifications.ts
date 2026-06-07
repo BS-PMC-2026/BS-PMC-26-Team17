@@ -10,6 +10,8 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
+import { AlertsService, type Alert as PikudAlert } from '@/services/AlertsService';
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
 // Show notifications even when the app is in the foreground — without this
@@ -59,8 +61,9 @@ export async function registerForPushNotifications(
 
   // The projectId comes from `extra.eas.projectId` in app.json (set by `eas build:configure`)
   const projectId =
-    (Constants.expoConfig as any)?.extra?.eas?.projectId ||
-    (Constants as any).easConfig?.projectId;
+  (Constants.expoConfig as any)?.extra?.eas?.projectId ||
+  (Constants as any).easConfig?.projectId ||
+  '44039d97-303d-49c8-ba97-0a11c66109d9';   // hardcoded fallback so legacy path is never used
 
   let token: string;
   try {
@@ -99,4 +102,47 @@ export async function clearPushNotifications(userId: string): Promise<void> {
   } catch {
     // Logout shouldn't fail just because the server is unreachable
   }
+}
+
+// ─── Oref push → in-app alert routing ────────────────────────────────────────
+
+/**
+ * Convert an incoming Expo push notification into a PikudAlert and feed it
+ * into the AlertsService pipeline. Same shape the polling path produces, so
+ * downstream UI (banner, auto-nav, sheets) works without changes.
+ *
+ * Returns the constructed alert (or null if the payload wasn't an Oref alert)
+ * mostly for tests — production callers can ignore.
+ */
+export function handleOrefPushNotification(
+  notification: Notifications.Notification,
+): PikudAlert | null {
+  const data = (notification?.request?.content?.data ?? {}) as Record<string, unknown>;
+  if (data.type !== 'oref-alert') return null;
+
+  const id   = typeof data.alertId === 'string' ? data.alertId : '';
+  const kind = data.alertKind === 'early' ? 'early' : 'siren';
+  const areas = Array.isArray(data.areas) ? data.areas.map(String) : [];
+  if (!id) return null;
+
+  const alert: PikudAlert = {
+    id,
+    kind,
+    title: notification.request.content.title || (kind === 'early' ? 'התרעה מוקדמת' : 'אזעקה'),
+    areas,
+  };
+  AlertsService.injectAlert(alert);
+  return alert;
+}
+
+/**
+ * Register the foreground notification listener at app boot. Call once
+ * from the root layout. Returns the subscription so the caller can
+ * unsubscribe on unmount.
+ *
+ * Note: Expo also delivers the payload when the user taps the
+ * notification from the system tray; tap-to-deep-link is Phase 3 work.
+ */
+export function registerOrefNotificationListener(): { remove: () => void } {
+  return Notifications.addNotificationReceivedListener(handleOrefPushNotification);
 }

@@ -64,6 +64,18 @@ class AlertsServiceImpl {
     this.emit(alert);
   }
 
+  /**
+   * Public entry point used by the push-notification handler when a
+   * server-dispatched Oref alert arrives. Goes through the same dedupe
+   * as the polling path so a single alert never fires twice if both
+   * sources deliver it (push wakes the device, polling catches up).
+   */
+  injectAlert(alert: Alert) {
+    if (alert.id === this.lastSeenId) return;
+    this.lastSeenId = alert.id;
+    this.emit(alert);
+  }
+
   // ── internals ────────────────────────────────────────────────────────────
 
   private startPolling() {

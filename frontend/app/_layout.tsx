@@ -7,6 +7,7 @@ import { ActivityIndicator, View } from 'react-native';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/context/auth';
+import { registerOrefNotificationListener } from '@/services/notifications';
 
 export const unstable_settings = {
   anchor: 'login',
@@ -30,6 +31,15 @@ function RootLayoutNav() {
       router.replace('/(tabs)');
     }
   }, [isLoading, isLoggedIn, segments]);
+
+  // Listen for Oref alert push notifications at the root so they're
+  // delivered regardless of which screen the user is on. The handler
+  // funnels into AlertsService.injectAlert, which the existing map
+  // screen subscriber consumes — banner + auto-nav fire identically.
+  useEffect(() => {
+    const sub = registerOrefNotificationListener();
+    return () => sub.remove();
+  }, []);
 
   if (isLoading) {
     return (
