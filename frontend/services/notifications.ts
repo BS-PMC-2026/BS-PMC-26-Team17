@@ -78,7 +78,8 @@ export async function registerForPushNotifications(
     return null;
   }
 
-  // Persist on the backend
+  // Persist the Expo token on the backend (works for iOS today, and for
+  // Android too once Expo fixes their FCM V1 routing bug).
   try {
     await fetch(`${API_URL}/auth/push-token`, {
       method: 'POST',
@@ -86,7 +87,29 @@ export async function registerForPushNotifications(
       body: JSON.stringify({ user_id: userId, push_token: token }),
     });
   } catch (e) {
-    console.log('[push] failed to upload token:', e);
+    console.log('[push] failed to upload Expo token:', e);
+  }
+
+  // FCM-direct workaround: on Android, ALSO register the raw FCM device
+  // token. The backend dispatcher prefers this when present so we can
+  // bypass Expo's broken FCM V1 routing. Skip on iOS — there
+  // `getDevicePushTokenAsync` returns an APNs token, useless to FCM,
+  // and Expo's APNs path works fine anyway.
+  // See Backend/app/core/fcm_direct.py for how/when to revert this.
+  if (Platform.OS === 'android') {
+    try {
+      const dev = await Notifications.getDevicePushTokenAsync();
+      const fcmToken = dev.data;
+      if (typeof fcmToken === 'string' && fcmToken) {
+        await fetch(`${API_URL}/auth/fcm-token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, fcm_token: fcmToken }),
+        });
+      }
+    } catch (e) {
+      console.log('[push] FCM-direct token registration failed:', e);
+    }
   }
 
   return token;
@@ -123,7 +146,21 @@ export function handleOrefPushNotification(
 
   const id   = typeof data.alertId === 'string' ? data.alertId : '';
   const kind = data.alertKind === 'early' ? 'early' : 'siren';
-  const areas = Array.isArray(data.areas) ? data.areas.map(String) : [];
+  // `areas` arrives as an Array via Expo Push (which keeps JSON types intact),
+  // but FCM V1 requires every `data` value to be a string — so via the
+  // FCM-direct workaround it comes through as a JSON-encoded string.
+  // Handle both shapes.
+  let areas: string[] = [];
+  if (Array.isArray(data.areas)) {
+    areas = data.areas.map(String);
+  } else if (typeof data.areas === 'string') {
+    try {
+      const parsed = JSON.parse(data.areas);
+      if (Array.isArray(parsed)) areas = parsed.map(String);
+    } catch {
+      // Not JSON — leave areas empty rather than throw
+    }
+  }
   if (!id) return null;
 
   const alert: PikudAlert = {

@@ -48,13 +48,25 @@ import asyncio
 import json
 import logging
 import os
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from google.oauth2 import service_account
 import google.auth.transport.requests
 
 log = logging.getLogger(__name__)
+
+
+def _encode_for_fcm(value: Any) -> str:
+    """
+    FCM V1 requires every `data` value to be a string. Primitives convert
+    cleanly with `str(...)`, but lists/dicts need JSON encoding so the
+    frontend can `JSON.parse` them back — otherwise Python's repr leaks
+    (`str(['x']) == "['x']"`) and the frontend can't parse it as an array.
+    """
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return "" if value is None else str(value)
+    return json.dumps(value, ensure_ascii=False)
 
 # Lazy-loaded so the import doesn't crash if the JSON isn't present at
 # startup — the dispatcher just won't be able to send via this path.
@@ -95,8 +107,9 @@ async def _send_one(
 ) -> bool:
     """Send a single FCM V1 message. Returns True on HTTP 200."""
     try:
-        # FCM V1 requires all `data` values to be strings.
-        str_data = {str(k): str(v) for k, v in data.items()}
+        # FCM V1 requires all `data` values to be strings. Lists/dicts
+        # are JSON-encoded so the frontend can parse them back.
+        str_data = {str(k): _encode_for_fcm(v) for k, v in data.items()}
         resp = await client.post(url, headers=headers, json={
             "message": {
                 "token": token,
