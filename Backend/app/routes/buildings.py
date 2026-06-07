@@ -274,6 +274,69 @@ async def list_buildings(user_id: str = Query(...)):
     return {"buildings": buildings}
 
 
+@router.get("/{building_id}/permit-data")
+async def get_permit_data(building_id: str):
+    """Return building details and manager info for the permit review screen."""
+    try:
+        oid = ObjectId(building_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid building id")
+
+    doc = await db["ShelterTest"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    manager_first = manager_last = manager_phone = manager_address = ""
+    manager_id = doc.get("managerUserId")
+    if manager_id:
+        try:
+            manager = await db["User"].find_one({"_id": ObjectId(manager_id)})
+            if manager:
+                manager_first   = manager.get("firstName", "")
+                manager_last    = manager.get("lastName", "")
+                manager_phone   = manager.get("telephone", "")
+                manager_address = manager.get("address", "")
+        except Exception:
+            pass
+
+    return {
+        "address":              doc.get("address", ""),
+        "city":                 doc.get("city", ""),
+        "apartmentCount":       doc.get("apartmentCount"),
+        "shelterLocation":      doc.get("shelterLocation", ""),
+        "entranceCode":         doc.get("entranceCode", ""),
+        "registrationFileName": doc.get("registrationFileName"),
+        "registeredAt":         doc.get("registeredAt"),
+        "registrationStatus":   doc.get("registrationStatus", ""),
+        "managerFirstName":     manager_first,
+        "managerLastName":      manager_last,
+        "managerPhone":         manager_phone,
+        "managerAddress":       manager_address,
+    }
+
+
+@router.get("/{building_id}/permit")
+async def get_permit_base64(building_id: str):
+    """Return the stored base64 HTML certificate for the given building."""
+    try:
+        oid = ObjectId(building_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid building id")
+
+    doc = await db["ShelterTest"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    b64 = doc.get("registrationFileBase64")
+    if not b64:
+        raise HTTPException(status_code=404, detail="No permit file found")
+
+    return {
+        "fileBase64": b64,
+        "fileName": doc.get("registrationFileName", "certificate.html"),
+    }
+
+
 @router.get("/{registration_id}/file")
 async def get_registration_file(
     registration_id: str,
