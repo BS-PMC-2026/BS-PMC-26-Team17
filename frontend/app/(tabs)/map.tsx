@@ -335,19 +335,26 @@ export default function MapScreen() {
   // show alerts relevant to the user's current zone.
   // Manual injections (isManual: true) always show — they're already fired
   // with the correct zone from the demo modal.
-  // Real alerts are shown only if `alert.areas` contains the user's zone.
-  // When userZone is the generic fallback "באר שבע" we match any sub-zone
-  // (e.g. "באר שבע - מזרח") because we don't know the exact district.
+  // Real alerts:
+  //   - Sirens (kind === 'siren') always show — safety > noise.
+  //   - Early warnings only show when the user's zone shares a parent city
+  //     with at least one of the alert's areas. So a user in
+  //     "באר שבע - מערב" sees alerts for "באר שבע - מזרח" too (same city,
+  //     same incoming threat), but not alerts in unrelated cities.
+  //     Mirrors the server-side filter in
+  //     Backend/app/core/alert_dispatcher.py.
   useEffect(() => {
     return AlertsService.subscribe((alert) => {
-      if (alert.isManual) {
+      if (alert.isManual || alert.kind === 'siren') {
         setActiveAlert(alert);
         return;
       }
       const zone = userZoneRef.current;
+      const parentCity = (z: string) => (z || '').split(' - ', 1)[0].trim();
+      const userCity = parentCity(zone);
       const matches =
         alert.areas.includes(zone) ||
-        (zone === 'באר שבע' && alert.areas.some(a => a.startsWith('באר שבע')));
+        (!!userCity && alert.areas.some(a => parentCity(a) === userCity));
       if (matches) setActiveAlert(alert);
     });
   }, []);

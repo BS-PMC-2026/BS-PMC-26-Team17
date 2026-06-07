@@ -27,13 +27,36 @@ def _cursor(rows):
     return _AsyncCursor(rows)
 
 
+class _FakeLog:
+    """In-memory stand-in for AlertNotificationLog. Empty by default."""
+    def __init__(self):
+        self.rows = []
+    def find(self, query, projection=None):
+        return _cursor(self.rows)
+    async def insert_many(self, docs):
+        self.rows.extend(docs)
+
+
 def _patch_db(users_with_tokens):
-    """Build a fake `db` whose User.find returns the given rows."""
-    coll = MagicMock()
-    coll.find = MagicMock(return_value=_cursor(users_with_tokens))
+    """Fake db with separate User + AlertNotificationLog collections."""
+    user_coll = MagicMock()
+    user_coll.find = MagicMock(return_value=_cursor(users_with_tokens))
+    log_coll = _FakeLog()
     fake_db = MagicMock()
-    fake_db.__getitem__.return_value = coll
+    def getitem(name):
+        if name == "User":                 return user_coll
+        if name == "AlertNotificationLog": return log_coll
+        raise KeyError(name)
+    fake_db.__getitem__.side_effect = getitem
     return fake_db
+
+
+@pytest.fixture(autouse=True)
+def _skip_polygon_load():
+    """Phase 2a calls load_polygons at the top of dispatch — stub it out."""
+    with patch.object(alert_dispatcher, "load_polygons", AsyncMock(return_value=None)), \
+         patch.object(alert_dispatcher, "resolve_zone", return_value=None):
+        yield
 
 
 @pytest.mark.asyncio
