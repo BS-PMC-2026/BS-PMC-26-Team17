@@ -9,6 +9,7 @@
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import { router } from 'expo-router';
 
 import { AlertsService, type Alert as PikudAlert } from '@/services/AlertsService';
 
@@ -139,10 +140,65 @@ export function handleOrefPushNotification(
  * Register the foreground notification listener at app boot. Call once
  * from the root layout. Returns the subscription so the caller can
  * unsubscribe on unmount.
- *
- * Note: Expo also delivers the payload when the user taps the
- * notification from the system tray; tap-to-deep-link is Phase 3 work.
  */
 export function registerOrefNotificationListener(): { remove: () => void } {
   return Notifications.addNotificationReceivedListener(handleOrefPushNotification);
+}
+
+// ─── Tap-to-deep-link (Phase 3) ───────────────────────────────────────────────
+
+/** Where notification taps route to. The map screen is where the existing
+ *  alert subscriber lives — banner, auto-nav for sirens, NearbyShelterSheet
+ *  for pre-alarms all fire from there. */
+const ALERT_LANDING_ROUTE = '/(tabs)/map';
+
+/**
+ * Handle a notification-tap response. Injects the alert (so the in-app
+ * banner / auto-nav fires) AND routes the user to the map screen.
+ *
+ * Works for both warm taps (app already running, listener fires) and
+ * cold-start taps (replayed from `getLastNotificationResponseAsync` on
+ * app boot — see `processColdStartOrefTap` below).
+ *
+ * If the user isn't logged in yet, the alert is still injected — once
+ * they finish login and land on the map, AlertsService's replay buffer
+ * fires the banner/auto-nav after a few seconds of grace period.
+ */
+export function handleOrefNotificationTap(
+  response: Notifications.NotificationResponse,
+): PikudAlert | null {
+  const alert = handleOrefPushNotification(response?.notification);
+  if (!alert) return null;
+  try {
+    router.push(ALERT_LANDING_ROUTE as any);
+  } catch (e) {
+    // The router might not be initialised yet on a very early cold start.
+    // The replay buffer on AlertsService covers this — once the map screen
+    // finally mounts and subscribes, the alert fires automatically.
+    console.log('[push] tap router.push failed (will rely on replay):', e);
+  }
+  return alert;
+}
+
+/** Register the tap listener at app boot. Returns the Expo subscription. */
+export function registerOrefTapListener(): { remove: () => void } {
+  return Notifications.addNotificationResponseReceivedListener(handleOrefNotificationTap);
+}
+
+/**
+ * Cold-start replay: if the app was launched by the user tapping a
+ * notification, the warm-listener doesn't fire (we weren't running yet).
+ * Check the system for that pending response and process it now.
+ *
+ * Idempotent — Expo only returns a non-null value once per launch.
+ */
+export async function processColdStartOrefTap(): Promise<PikudAlert | null> {
+  try {
+    const response = await Notifications.getLastNotificationResponseAsync();
+    if (!response) return null;
+    return handleOrefNotificationTap(response);
+  } catch (e) {
+    console.log('[push] cold-start tap check failed:', e);
+    return null;
+  }
 }

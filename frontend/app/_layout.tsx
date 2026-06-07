@@ -7,7 +7,11 @@ import { ActivityIndicator, View } from 'react-native';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/context/auth';
-import { registerOrefNotificationListener } from '@/services/notifications';
+import {
+  processColdStartOrefTap,
+  registerOrefNotificationListener,
+  registerOrefTapListener,
+} from '@/services/notifications';
 
 export const unstable_settings = {
   anchor: 'login',
@@ -36,9 +40,19 @@ function RootLayoutNav() {
   // delivered regardless of which screen the user is on. The handler
   // funnels into AlertsService.injectAlert, which the existing map
   // screen subscriber consumes — banner + auto-nav fire identically.
+  //
+  // Two listeners + a one-shot cold-start replay:
+  //   - foreground push received        → addNotificationReceivedListener
+  //   - user taps push from outside app → addNotificationResponseReceivedListener
+  //   - app launched BY a tap (cold)    → getLastNotificationResponseAsync
   useEffect(() => {
-    const sub = registerOrefNotificationListener();
-    return () => sub.remove();
+    const recvSub = registerOrefNotificationListener();
+    const tapSub  = registerOrefTapListener();
+    processColdStartOrefTap();   // fire-and-forget; runs once on mount
+    return () => {
+      recvSub.remove();
+      tapSub.remove();
+    };
   }, []);
 
   if (isLoading) {
