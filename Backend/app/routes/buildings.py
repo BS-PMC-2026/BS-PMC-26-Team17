@@ -402,6 +402,68 @@ async def get_registration_file(
     )
 
 
+@router.get("/{registration_id}/viewer")
+async def get_registration_viewer(
+    registration_id: str,
+    user_id: str = Query(...),
+):
+    """HTML page that embeds Mozilla PDF.js and renders the registration
+    file inline. Works on Android WebView (which can't render PDFs
+    natively) as well as iOS. The WebView fetches the actual PDF bytes
+    via the existing /file endpoint on the same backend.
+    """
+    if not await _is_admin(user_id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    try:
+        ObjectId(registration_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid id")
+
+    file_url = f"/buildings/{registration_id}/file?user_id={user_id}"
+    html = (
+        "<!DOCTYPE html>\n"
+        "<html><head>\n"
+        '<meta charset="utf-8"/>\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>\n'
+        "<style>\n"
+        "  html,body{margin:0;padding:0;background:#222;color:#eee;font-family:system-ui;}\n"
+        "  #wrap{padding:8px 4px 32px;}\n"
+        "  canvas{display:block;margin:8px auto;background:#fff;max-width:100%;height:auto;\n"
+        "         box-shadow:0 1px 4px rgba(0,0,0,.4);}\n"
+        "  #status{text-align:center;padding:24px;font-size:14px;}\n"
+        "</style>\n"
+        "</head><body>\n"
+        '<div id="status">Loading document…</div>\n'
+        '<div id="wrap"></div>\n'
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>\n'
+        "<script>\n"
+        "  pdfjsLib.GlobalWorkerOptions.workerSrc =\n"
+        "    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';\n"
+        "  var wrap = document.getElementById('wrap');\n"
+        "  var status = document.getElementById('status');\n"
+        f"  var url = {file_url!r};\n"
+        "  pdfjsLib.getDocument(url).promise.then(async function(pdf){\n"
+        "    status.remove();\n"
+        "    for (var i=1; i<=pdf.numPages; i++) {\n"
+        "      var page = await pdf.getPage(i);\n"
+        "      var dpr = Math.min(2, window.devicePixelRatio || 1);\n"
+        "      var viewport = page.getViewport({ scale: 1.4 * dpr });\n"
+        "      var canvas = document.createElement('canvas');\n"
+        "      canvas.width  = viewport.width;\n"
+        "      canvas.height = viewport.height;\n"
+        "      canvas.style.width = (viewport.width / dpr) + 'px';\n"
+        "      wrap.appendChild(canvas);\n"
+        "      await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;\n"
+        "    }\n"
+        "  }).catch(function(err){\n"
+        "    status.textContent = 'Could not load document: ' + ((err && err.message) || err);\n"
+        "  });\n"
+        "</script>\n"
+        "</body></html>"
+    )
+    return Response(content=html, media_type="text/html; charset=utf-8")
+
+
 class ApproveRequest(BaseModel):
     user_id: str
 

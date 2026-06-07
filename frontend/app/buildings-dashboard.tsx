@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Alert, Modal, Platform,
+  ActivityIndicator, Alert, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -182,16 +182,20 @@ export default function BuildingsDashboard() {
     setViewing(building);
   };
 
-  // URL of the document for the in-app viewer. Android WebView can't render
-  // PDFs natively, so we wrap them with Google Docs viewer there.
+  // URL of the document for the in-app viewer. PDFs go through the backend's
+  // `/viewer` endpoint which embeds Mozilla PDF.js — this renders the same
+  // on iOS and Android (Android WebView can't display PDFs natively).
+  // Images load directly from `/file` since WebView renders them on both
+  // platforms.
   const viewerUrl = (() => {
     if (!viewing) return '';
-    const raw = `${API_URL}/buildings/${viewing.id}/file?user_id=${user?.id}`;
-    const isPdf = (viewing.registrationFileName || '').toLowerCase().endsWith('.pdf');
-    if (Platform.OS === 'android' && isPdf) {
-      return `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(raw)}`;
-    }
-    return raw;
+    // Only images skip the PDF.js viewer — WebView renders them natively.
+    // Anything else (PDFs, unknown extensions, missing filename) goes
+    // through `/viewer` so Android doesn't fall back to "download binary".
+    const name = (viewing.registrationFileName || '').toLowerCase();
+    const isImage = /\.(png|jpe?g|gif|webp)$/.test(name);
+    const endpoint = isImage ? 'file' : 'viewer';
+    return `${API_URL}/buildings/${viewing.id}/${endpoint}?user_id=${user?.id}`;
   })();
 
   const filtered = useMemo(() => {
@@ -429,6 +433,15 @@ export default function BuildingsDashboard() {
               style={{ flex: 1, backgroundColor: '#fff' }}
               originWhitelist={['*']}
               startInLoadingState
+              // Android: allow HTTPS scripts (PDF.js from CDN) inside our
+              // HTTP page — otherwise the PDF.js never loads and the user
+              // sees a blank or the raw binary download fallback.
+              mixedContentMode="always"
+              javaScriptEnabled
+              domStorageEnabled
+              // If the WebView is asked to download a file (Android's default
+              // for PDFs it can't render), fall back to the OS handler.
+              onShouldStartLoadWithRequest={() => true}
               renderLoading={() => (
                 <View style={pdfStyles.loading}>
                   <ActivityIndicator size="large" color="#0a7ea4" />
