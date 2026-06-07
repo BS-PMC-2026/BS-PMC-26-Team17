@@ -16,7 +16,7 @@ type Building = {
   city: string;
   managerName?: string;
   managerUserId?: string;
-  registrationStatus: 'pending' | 'approved' | 'rejected';
+  registrationStatus: 'pending' | 'approved' | 'rejected' | 'cancelled';
   entranceCode?: string;
   // Server now sends a `hasFile` boolean + the filename only. The actual
   // bytes are fetched on demand via GET /buildings/{id}/file.
@@ -31,14 +31,16 @@ type Building = {
 type Filter = 'All' | 'pending' | 'approved' | 'rejected';
 
 const STATUS_COLORS: Record<string, string> = {
-  pending:  '#BA7517',
-  approved: '#1D9E75',
-  rejected: '#E24B4A',
+  pending:   '#BA7517',
+  approved:  '#1D9E75',
+  rejected:  '#E24B4A',
+  cancelled: '#E24B4A',
 };
 const STATUS_LABELS: Record<string, string> = {
-  pending:  'Pending',
-  approved: 'Approved',
-  rejected: 'Rejected',
+  pending:   'Pending',
+  approved:  'Approved',
+  rejected:  'Rejected',
+  cancelled: 'Rejected',
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -194,13 +196,14 @@ export default function BuildingsDashboard() {
 
   const filtered = useMemo(() => {
     if (filter === 'All') return buildings;
+    if (filter === 'rejected') return buildings.filter(b => b.registrationStatus === 'rejected' || b.registrationStatus === 'cancelled');
     return buildings.filter(b => b.registrationStatus === filter);
   }, [buildings, filter]);
 
   const totalCount    = buildings.length;
   const pendingCount  = buildings.filter(b => b.registrationStatus === 'pending').length;
   const approvedCount = buildings.filter(b => b.registrationStatus === 'approved').length;
-  const rejectedCount = buildings.filter(b => b.registrationStatus === 'rejected').length;
+  const rejectedCount = buildings.filter(b => b.registrationStatus === 'rejected' || b.registrationStatus === 'cancelled').length;
 
   if (!isAdmin) {
     return (
