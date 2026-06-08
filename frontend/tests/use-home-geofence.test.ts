@@ -9,7 +9,7 @@
  *   - When home isn't configured (0,0 or null), no work happens.
  */
 import React from 'react';
-import { render, act } from '@testing-library/react-native';
+import { render, act, waitFor, cleanup } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
@@ -50,6 +50,12 @@ const asMock = <T,>(v: T) => v as jest.Mock;
 let positionCallback: ((loc: any) => Promise<void> | void) | null = null;
 
 beforeEach(() => {
+  // Force-unmount any leftover trees from prior tests. RTL auto-cleans,
+  // but during async test setup we sometimes get a stale component
+  // hanging around long enough to register a watcher with the OLD
+  // (pre-reset) `positionCallback` closure. Explicit cleanup eliminates
+  // the race entirely.
+  cleanup();
   jest.clearAllMocks();
   positionCallback = null;
   mockUseAuth.mockReturnValue({
@@ -84,6 +90,23 @@ async function flush() {
   });
 }
 
+/**
+ * Wait until the hook has actually called `Location.watchPositionAsync` and
+ * we've captured its callback. Use this in tests that then drive the hook
+ * by invoking `positionCallback` — `flush()` alone races with React's
+ * effect scheduler and was the source of a ~25 %-flake-rate in CI.
+ */
+async function waitForWatcher() {
+  await waitFor(
+    () => expect(positionCallback).not.toBeNull(),
+    { timeout: 2000, interval: 10 },
+  );
+  // Give the IIFE one extra tick to finish any remaining setup after
+  // capturing the callback (e.g., scheduling the poll interval) — keeps
+  // the hook in a fully-settled state before the test starts driving it.
+  await act(async () => { await Promise.resolve(); });
+}
+
 describe('useHomeGeofence', () => {
   it('first reading in a session fires notification + reports event (regardless of stored state)', async () => {
     setSettings({ homeLat: 32.0853, homeLng: 34.7818, radius: '500' });
@@ -101,7 +124,7 @@ describe('useHomeGeofence', () => {
     });
 
     render(React.createElement(HookHost));
-    await flush();
+    await waitForWatcher();
 
     // Far enough away to be "outside"
     await act(async () => {
@@ -132,7 +155,7 @@ describe('useHomeGeofence', () => {
     });
 
     render(React.createElement(HookHost));
-    await flush();
+    await waitForWatcher();
 
     // First reading: outside
     await act(async () => {
@@ -183,7 +206,7 @@ describe('useHomeGeofence', () => {
     });
 
     render(React.createElement(HookHost));
-    await flush();
+    await waitForWatcher();
 
     // First reading is inside the radius → this is BOTH first-reading
     // (always fires) AND a real transition.

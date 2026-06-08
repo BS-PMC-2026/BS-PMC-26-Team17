@@ -9,6 +9,9 @@
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import { router } from 'expo-router';
+
+import { AlertsService, type Alert as PikudAlert } from '@/services/AlertsService';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -59,8 +62,9 @@ export async function registerForPushNotifications(
 
   // The projectId comes from `extra.eas.projectId` in app.json (set by `eas build:configure`)
   const projectId =
-    (Constants.expoConfig as any)?.extra?.eas?.projectId ||
-    (Constants as any).easConfig?.projectId;
+  (Constants.expoConfig as any)?.extra?.eas?.projectId ||
+  (Constants as any).easConfig?.projectId ||
+  '44039d97-303d-49c8-ba97-0a11c66109d9';   // hardcoded fallback so legacy path is never used
 
   let token: string;
   try {
@@ -74,7 +78,8 @@ export async function registerForPushNotifications(
     return null;
   }
 
-  // Persist on the backend
+  // Persist the Expo token on the backend (works for iOS today, and for
+  // Android too once Expo fixes their FCM V1 routing bug).
   try {
     await fetch(`${API_URL}/auth/push-token`, {
       method: 'POST',
@@ -82,7 +87,29 @@ export async function registerForPushNotifications(
       body: JSON.stringify({ user_id: userId, push_token: token }),
     });
   } catch (e) {
-    console.log('[push] failed to upload token:', e);
+    console.log('[push] failed to upload Expo token:', e);
+  }
+
+  // FCM-direct workaround: on Android, ALSO register the raw FCM device
+  // token. The backend dispatcher prefers this when present so we can
+  // bypass Expo's broken FCM V1 routing. Skip on iOS — there
+  // `getDevicePushTokenAsync` returns an APNs token, useless to FCM,
+  // and Expo's APNs path works fine anyway.
+  // See Backend/app/core/fcm_direct.py for how/when to revert this.
+  if (Platform.OS === 'android') {
+    try {
+      const dev = await Notifications.getDevicePushTokenAsync();
+      const fcmToken = dev.data;
+      if (typeof fcmToken === 'string' && fcmToken) {
+        await fetch(`${API_URL}/auth/fcm-token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, fcm_token: fcmToken }),
+        });
+      }
+    } catch (e) {
+      console.log('[push] FCM-direct token registration failed:', e);
+    }
   }
 
   return token;
@@ -98,5 +125,117 @@ export async function clearPushNotifications(userId: string): Promise<void> {
     await fetch(`${API_URL}/auth/push-token/${userId}`, { method: 'DELETE' });
   } catch {
     // Logout shouldn't fail just because the server is unreachable
+  }
+}
+
+// ─── Oref push → in-app alert routing ────────────────────────────────────────
+
+/**
+ * Convert an incoming Expo push notification into a PikudAlert and feed it
+ * into the AlertsService pipeline. Same shape the polling path produces, so
+ * downstream UI (banner, auto-nav, sheets) works without changes.
+ *
+ * Returns the constructed alert (or null if the payload wasn't an Oref alert)
+ * mostly for tests — production callers can ignore.
+ */
+export function handleOrefPushNotification(
+  notification: Notifications.Notification,
+): PikudAlert | null {
+  const data = (notification?.request?.content?.data ?? {}) as Record<string, unknown>;
+  if (data.type !== 'oref-alert') return null;
+
+  const id   = typeof data.alertId === 'string' ? data.alertId : '';
+  const kind = data.alertKind === 'early' ? 'early' : 'siren';
+  // `areas` arrives as an Array via Expo Push (which keeps JSON types intact),
+  // but FCM V1 requires every `data` value to be a string — so via the
+  // FCM-direct workaround it comes through as a JSON-encoded string.
+  // Handle both shapes.
+  let areas: string[] = [];
+  if (Array.isArray(data.areas)) {
+    areas = data.areas.map(String);
+  } else if (typeof data.areas === 'string') {
+    try {
+      const parsed = JSON.parse(data.areas);
+      if (Array.isArray(parsed)) areas = parsed.map(String);
+    } catch {
+      // Not JSON — leave areas empty rather than throw
+    }
+  }
+  if (!id) return null;
+
+  const alert: PikudAlert = {
+    id,
+    kind,
+    title: notification.request.content.title || (kind === 'early' ? 'התרעה מוקדמת' : 'אזעקה'),
+    areas,
+  };
+  AlertsService.injectAlert(alert);
+  return alert;
+}
+
+/**
+ * Register the foreground notification listener at app boot. Call once
+ * from the root layout. Returns the subscription so the caller can
+ * unsubscribe on unmount.
+ */
+export function registerOrefNotificationListener(): { remove: () => void } {
+  return Notifications.addNotificationReceivedListener(handleOrefPushNotification);
+}
+
+// ─── Tap-to-deep-link (Phase 3) ───────────────────────────────────────────────
+
+/** Where notification taps route to. The map screen is where the existing
+ *  alert subscriber lives — banner, auto-nav for sirens, NearbyShelterSheet
+ *  for pre-alarms all fire from there. */
+const ALERT_LANDING_ROUTE = '/(tabs)/map';
+
+/**
+ * Handle a notification-tap response. Injects the alert (so the in-app
+ * banner / auto-nav fires) AND routes the user to the map screen.
+ *
+ * Works for both warm taps (app already running, listener fires) and
+ * cold-start taps (replayed from `getLastNotificationResponseAsync` on
+ * app boot — see `processColdStartOrefTap` below).
+ *
+ * If the user isn't logged in yet, the alert is still injected — once
+ * they finish login and land on the map, AlertsService's replay buffer
+ * fires the banner/auto-nav after a few seconds of grace period.
+ */
+export function handleOrefNotificationTap(
+  response: Notifications.NotificationResponse,
+): PikudAlert | null {
+  const alert = handleOrefPushNotification(response?.notification);
+  if (!alert) return null;
+  try {
+    router.push(ALERT_LANDING_ROUTE as any);
+  } catch (e) {
+    // The router might not be initialised yet on a very early cold start.
+    // The replay buffer on AlertsService covers this — once the map screen
+    // finally mounts and subscribes, the alert fires automatically.
+    console.log('[push] tap router.push failed (will rely on replay):', e);
+  }
+  return alert;
+}
+
+/** Register the tap listener at app boot. Returns the Expo subscription. */
+export function registerOrefTapListener(): { remove: () => void } {
+  return Notifications.addNotificationResponseReceivedListener(handleOrefNotificationTap);
+}
+
+/**
+ * Cold-start replay: if the app was launched by the user tapping a
+ * notification, the warm-listener doesn't fire (we weren't running yet).
+ * Check the system for that pending response and process it now.
+ *
+ * Idempotent — Expo only returns a non-null value once per launch.
+ */
+export async function processColdStartOrefTap(): Promise<PikudAlert | null> {
+  try {
+    const response = await Notifications.getLastNotificationResponseAsync();
+    if (!response) return null;
+    return handleOrefNotificationTap(response);
+  } catch (e) {
+    console.log('[push] cold-start tap check failed:', e);
+    return null;
   }
 }
