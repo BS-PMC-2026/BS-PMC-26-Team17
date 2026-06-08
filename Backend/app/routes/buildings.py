@@ -377,11 +377,18 @@ async def get_registration_file(
         f"name={name!r} head={head!r}"
     )
     ext = (name.rsplit(".", 1)[-1] if "." in name else "").lower()
+    # Anything WebView can render inline gets its real mime type. Without
+    # this, HTML certificates (`certificate.html`) ship as octet-stream and
+    # Android WebView treats the response as a download instead of a page.
     ctype = {
         "pdf":  "application/pdf",
         "png":  "image/png",
         "jpg":  "image/jpeg",
         "jpeg": "image/jpeg",
+        "gif":  "image/gif",
+        "webp": "image/webp",
+        "html": "text/html; charset=utf-8",
+        "htm":  "text/html; charset=utf-8",
     }.get(ext, "application/octet-stream")
 
     # HTTP headers must be latin-1. Hebrew (or any non-ASCII) filenames need
@@ -420,6 +427,19 @@ async def get_registration_viewer(
         raise HTTPException(status_code=400, detail="Invalid id")
 
     file_url = f"/buildings/{registration_id}/file?user_id={user_id}"
+    # Why each option matters for Android WebView:
+    #   - `disableWorker`: avoids the cross-origin Web Worker that PDF.js
+    #     tries to spin up from the CDN. Android WebView blocks cross-origin
+    #     workers, and PDF.js 3.x's silent fallback to a "fake worker" has a
+    #     known hang on Android (iOS retries and succeeds quickly). Main-
+    #     thread parsing is plenty fast for a permit-sized PDF.
+    #   - `disableRange` + `disableStream`: FastAPI's `Response` ships the
+    #     whole body in one shot with no `Accept-Ranges` header, so byte-
+    #     range fetches PDF.js attempts by default never make progress on
+    #     Android. Force a single full GET instead.
+    #   - script `onerror` + watchdog: if cdnjs itself fails to load,
+    #     `pdfjsLib is not defined` would otherwise leave the user stuck on
+    #     "Loading document…" forever. Now they get a real error.
     html = (
         "<!DOCTYPE html>\n"
         "<html><head>\n"
@@ -435,29 +455,46 @@ async def get_registration_viewer(
         "</head><body>\n"
         '<div id="status">Loading document…</div>\n'
         '<div id="wrap"></div>\n'
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>\n'
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"\n'
+        '        onerror="document.getElementById(\'status\').textContent='
+        "'Could not load PDF viewer (check connection).'\"></script>\n"
         "<script>\n"
-        "  pdfjsLib.GlobalWorkerOptions.workerSrc =\n"
-        "    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';\n"
         "  var wrap = document.getElementById('wrap');\n"
         "  var status = document.getElementById('status');\n"
         f"  var url = {file_url!r};\n"
-        "  pdfjsLib.getDocument(url).promise.then(async function(pdf){\n"
-        "    status.remove();\n"
-        "    for (var i=1; i<=pdf.numPages; i++) {\n"
-        "      var page = await pdf.getPage(i);\n"
-        "      var dpr = Math.min(2, window.devicePixelRatio || 1);\n"
-        "      var viewport = page.getViewport({ scale: 1.4 * dpr });\n"
-        "      var canvas = document.createElement('canvas');\n"
-        "      canvas.width  = viewport.width;\n"
-        "      canvas.height = viewport.height;\n"
-        "      canvas.style.width = (viewport.width / dpr) + 'px';\n"
-        "      wrap.appendChild(canvas);\n"
-        "      await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;\n"
-        "    }\n"
-        "  }).catch(function(err){\n"
-        "    status.textContent = 'Could not load document: ' + ((err && err.message) || err);\n"
-        "  });\n"
+        "  if (typeof pdfjsLib === 'undefined') {\n"
+        "    status.textContent = 'PDF viewer script failed to load.';\n"
+        "  } else {\n"
+        "    pdfjsLib.GlobalWorkerOptions.workerSrc =\n"
+        "      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';\n"
+        "    var watchdog = setTimeout(function(){\n"
+        "      if (status.parentNode) status.textContent =\n"
+        "        'Document is taking longer than expected to load…';\n"
+        "    }, 15000);\n"
+        "    pdfjsLib.getDocument({\n"
+        "      url: url,\n"
+        "      disableWorker: true,\n"
+        "      disableRange: true,\n"
+        "      disableStream: true,\n"
+        "    }).promise.then(async function(pdf){\n"
+        "      clearTimeout(watchdog);\n"
+        "      status.remove();\n"
+        "      for (var i=1; i<=pdf.numPages; i++) {\n"
+        "        var page = await pdf.getPage(i);\n"
+        "        var dpr = Math.min(2, window.devicePixelRatio || 1);\n"
+        "        var viewport = page.getViewport({ scale: 1.4 * dpr });\n"
+        "        var canvas = document.createElement('canvas');\n"
+        "        canvas.width  = viewport.width;\n"
+        "        canvas.height = viewport.height;\n"
+        "        canvas.style.width = (viewport.width / dpr) + 'px';\n"
+        "        wrap.appendChild(canvas);\n"
+        "        await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;\n"
+        "      }\n"
+        "    }).catch(function(err){\n"
+        "      clearTimeout(watchdog);\n"
+        "      status.textContent = 'Could not load document: ' + ((err && err.message) || err);\n"
+        "    });\n"
+        "  }\n"
         "</script>\n"
         "</body></html>"
     )

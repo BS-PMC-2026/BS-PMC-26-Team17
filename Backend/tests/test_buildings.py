@@ -454,3 +454,34 @@ async def test_register_success_stores_hidden_doc(async_client):
         assert inserted_doc["isVisibleOnMap"] is False
         assert inserted_doc["registrationStatus"] == "pending"
         assert inserted_doc["managerUserId"] == USER_ID
+
+
+# ---------------------------------------------------------------------------
+# Viewer endpoint — Android compat guard
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_viewer_html_uses_android_safe_pdfjs_options(async_client):
+    """The PDF.js viewer HTML must keep the three options that make it
+    actually render on Android WebView: disableWorker (cross-origin worker
+    blocked), disableRange + disableStream (FastAPI Response has no
+    Accept-Ranges). Without these, Android sits forever on "Loading
+    document…" while iOS happens to work.
+    """
+    with patch("app.routes.buildings.db") as mock_db:
+        coll = MagicMock()
+        coll.find_one = AsyncMock(return_value={"_id": ObjectId(USER_ID), "role": "admin"})
+        mock_db.__getitem__.return_value = coll
+
+        response = await async_client.get(
+            f"/buildings/{VALID_OID}/viewer?user_id={USER_ID}"
+        )
+
+        assert response.status_code == 200
+        html = response.text
+        assert "disableWorker: true" in html
+        assert "disableRange: true" in html
+        assert "disableStream: true" in html
+        # And the script-load failure path must still be wired up, so a CDN
+        # outage shows a real error instead of an infinite spinner.
+        assert "onerror=" in html

@@ -182,19 +182,16 @@ export default function BuildingsDashboard() {
     setViewing(building);
   };
 
-  // URL of the document for the in-app viewer. PDFs go through the backend's
-  // `/viewer` endpoint which embeds Mozilla PDF.js — this renders the same
-  // on iOS and Android (Android WebView can't display PDFs natively).
-  // Images load directly from `/file` since WebView renders them on both
-  // platforms.
+  // URL of the document for the in-app viewer. Only real PDFs go through the
+  // backend's `/viewer` endpoint (Mozilla PDF.js) — Android WebView can't
+  // display PDFs natively, but it renders HTML and images just fine. Routing
+  // HTML certificates through PDF.js makes the worker try to parse `<!DOCTYPE`
+  // as PDF bytes and the loader hangs forever on Android.
   const viewerUrl = (() => {
     if (!viewing) return '';
-    // Only images skip the PDF.js viewer — WebView renders them natively.
-    // Anything else (PDFs, unknown extensions, missing filename) goes
-    // through `/viewer` so Android doesn't fall back to "download binary".
     const name = (viewing.registrationFileName || '').toLowerCase();
-    const isImage = /\.(png|jpe?g|gif|webp)$/.test(name);
-    const endpoint = isImage ? 'file' : 'viewer';
+    const isPdf = /\.pdf$/.test(name);
+    const endpoint = isPdf ? 'viewer' : 'file';
     return `${API_URL}/buildings/${viewing.id}/${endpoint}?user_id=${user?.id}`;
   })();
 
