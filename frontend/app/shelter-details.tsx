@@ -1,16 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import * as Location from 'expo-location';
+
 import { useAuth } from '@/context/auth';
 import { NavigationService } from '@/services/NavigationService';
+import Button from '@/components/ui/Button';
+import Card from '@/components/ui/Card';
+import Screen from '@/components/ui/Screen';
+import ScreenHeader from '@/components/ui/ScreenHeader';
+import { Palette, Radius, Spacing, Typography } from '@/constants/theme';
 
-const ACCESS_LABELS: Record<string, string> = { open: 'Open', closed: 'Closed', locked: 'Locked', unknown: 'Unknown' };
-const ACCESS_COLORS: Record<string, string> = { open: '#1D9E75', closed: '#E24B4A', locked: '#888780', unknown: '#BA7517' };
-const CLEAN_LABELS:  Record<string, string> = { clean: 'Clean', dirty: 'Dirty', unknown: 'Unknown' };
-const TYPE_LABELS:   Record<string, string> = { 'public shelter': 'Public Shelter', school: 'School', parking: 'Parking', other: 'Other' };
+const ACCESS_LABELS: Record<string, string> = {
+  open: 'Open', closed: 'Closed', locked: 'Locked', unknown: 'Unknown',
+};
+const ACCESS_COLORS: Record<string, string> = {
+  open:    Palette.success,
+  closed:  Palette.danger,
+  locked:  Palette.textTertiary,
+  unknown: Palette.warning,
+};
+const CLEAN_LABELS:  Record<string, string> = {
+  clean: 'Clean', dirty: 'Dirty', unknown: 'Unknown',
+};
+const TYPE_LABELS:   Record<string, string> = {
+  'public shelter': 'Public Shelter', school: 'School', parking: 'Parking', other: 'Other',
+};
 
 function timeAgo(dateStr?: string): string {
   if (!dateStr) return '—';
@@ -89,11 +106,41 @@ export default function ShelterDetailsScreen() {
     { key: 'driving' as const, label: 'Driving', icon: '🚗' },
   ];
 
-  console.log('[ShelterDetails]', {
-    params: { id: p.id, lat: p.lat, lng: p.lng, name: p.name, alertKind: p.alertKind, fromLat: p.fromLat, fromLng: p.fromLng },
-    distanceM,
-    eta: { foot: etaMin('foot'), cycling: etaMin('cycling'), driving: etaMin('driving') },
+  // Status chips at the top of the page. Each one is a self-labelled badge so
+  // there's never a bare emoji the user has to guess at. Built from the
+  // shelter's flags rather than hand-typed at the call site so future
+  // additions (e.g. "Has water") follow the same pattern.
+  const statusChips: { icon: string; label: string; tone: 'success' | 'danger' | 'warning' | 'neutral' }[] = [];
+
+  // Access status — Open / Closed / Locked / Unknown
+  const access = p.accessStatus || 'unknown';
+  const accessTone: 'success' | 'danger' | 'warning' | 'neutral' =
+    access === 'open' ? 'success'
+    : access === 'closed' ? 'danger'
+    : access === 'locked' ? 'neutral'
+    : 'warning';
+  statusChips.push({
+    icon: access === 'open' ? '🟢' : access === 'closed' ? '🔴' : access === 'locked' ? '🔒' : '❓',
+    label: ACCESS_LABELS[access],
+    tone: accessTone,
   });
+
+  // Capacity — Available / Full
+  statusChips.push({
+    icon: isFull ? '🚫' : '👥',
+    label: isFull ? 'Full' : 'Available',
+    tone: isFull ? 'danger' : 'success',
+  });
+
+  // Step-free access
+  if (isAccessible && !hasStairs) {
+    statusChips.push({ icon: '♿', label: 'Step-free', tone: 'success' });
+  }
+
+  // Pets allowed
+  if (!petIssueReported) {
+    statusChips.push({ icon: '🐾', label: 'Pets allowed', tone: 'success' });
+  }
 
   const navigate = () => {
     // Forward the sim "from" point if it was carried in by map.tsx — keeps
@@ -106,7 +153,6 @@ export default function ShelterDetailsScreen() {
   };
 
   const report = () => {
-    // /report isn't a typed route yet — cast until the file is added.
     router.push(
       `/report?shelterId=${p.id || ''}&shelterName=${encodeURIComponent(p.name || 'Shelter')}` as any,
     );
@@ -117,61 +163,37 @@ export default function ShelterDetailsScreen() {
   };
 
   return (
-    <SafeAreaView style={s.container}>
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
-          <Text style={s.backIcon}>‹</Text>
-        </TouchableOpacity>
-        <Text style={s.headerTitle} numberOfLines={1}>Shelter Details</Text>
-        <View style={{ width: 30 }} />
-      </View>
+    <Screen variant="light">
+      <ScreenHeader title="Shelter Details" />
 
       <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
         <Text style={s.title} numberOfLines={3}>{p.name || 'Shelter'}</Text>
 
-        {/* Quick icons */}
-        <View style={s.iconRow}>
-          {isAccessible && !hasStairs && <Text style={s.bigIcon}>♿</Text>}
-          {!petIssueReported && <Text style={s.bigIcon}>🐾</Text>}
+        {/* Status chips. Each chip pairs an emoji with a short label so the
+            meaning is self-evident — no more bare ♿ / 🐾 the user has to guess. */}
+        <Text style={s.sectionLabel}>Status</Text>
+        <View style={s.chipsRow}>
+          {statusChips.map(c => (
+            <StatusChip key={c.label} icon={c.icon} label={c.label} tone={c.tone} />
+          ))}
         </View>
 
-        {/* Status badges */}
-        <View style={s.badgeRow}>
-          <View style={[s.badge, {
-            borderColor:     ACCESS_COLORS[p.accessStatus || 'unknown'] + '88',
-            backgroundColor: ACCESS_COLORS[p.accessStatus || 'unknown'] + '22',
-          }]}>
-            <Text style={[s.badgeTxt, { color: ACCESS_COLORS[p.accessStatus || 'unknown'] }]}>
-              {ACCESS_LABELS[p.accessStatus || 'unknown']}
-            </Text>
-          </View>
+        <Card>
+          <Row label="Address"        value={p.address || '—'} />
+          <Row label="Neighborhood"   value={p.neighborhood || '—'} />
+          <Row label="Area"           value={p.area || '—'} />
+          <Row label="City"           value={p.city || '—'} />
+          <Row label="Type"           value={TYPE_LABELS[p.placeType || ''] || p.placeType || '—'} />
+          <Row label="Capacity"       value={p.capacity || '—'} />
+          <Row label="Cleanliness"    value={CLEAN_LABELS[p.cleanlinessStatus || 'unknown']} />
+          <Row label="Should Be Open" value={shouldBeOpen ? '✓ Yes' : '✗ No'} />
+          <Row label="Has Stairs"     value={hasStairs ? 'Yes' : 'No'} />
+          <Row label="Accessible"     value={isAccessible ? 'Yes' : 'No'} />
+          <Row label="Last Report"    value={timeAgo(p.lastReportAt)} />
+          {p.lastReportType ? <Row label="Report Type" value={p.lastReportType} last /> : null}
+        </Card>
 
-          <View style={[s.badge, {
-            borderColor:     (isFull ? '#E24B4A' : '#1D9E75') + '88',
-            backgroundColor: (isFull ? '#E24B4A' : '#1D9E75') + '22',
-          }]}>
-            <Text style={[s.badgeTxt, { color: isFull ? '#E24B4A' : '#1D9E75' }]}>
-              {isFull ? 'Full' : 'Available'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Data rows */}
-        <Row label="Address"        value={p.address || '—'} />
-        <Row label="Neighborhood"   value={p.neighborhood || '—'} />
-        <Row label="Area"           value={p.area || '—'} />
-        <Row label="City"           value={p.city || '—'} />
-        <Row label="Type"           value={TYPE_LABELS[p.placeType || ''] || p.placeType || '—'} />
-        <Row label="Capacity"       value={p.capacity || '—'} />
-        <Row label="Cleanliness"    value={CLEAN_LABELS[p.cleanlinessStatus || 'unknown']} />
-        <Row label="Should Be Open" value={shouldBeOpen ? '✓ Yes' : '✗ No'} />
-        <Row label="Has Stairs"     value={hasStairs ? 'Yes' : 'No'} />
-        <Row label="Accessible"     value={isAccessible ? 'Yes' : 'No'} />
-        <Row label="Last Report"    value={timeAgo(p.lastReportAt)} />
-        {p.lastReportType ? <Row label="Report Type" value={p.lastReportType} /> : null}
-
-        <View style={{ height: 30 }} />
+        <View style={{ height: Spacing.lg }} />
       </ScrollView>
 
       {isEarlyWarning && (
@@ -180,15 +202,17 @@ export default function ShelterDetailsScreen() {
             const far  = tooFar(m.key);
             const eta  = etaMin(m.key);
             const etaLabel = eta != null ? `${Math.ceil(eta)} min` : '';
+            const active   = selectedMode === m.key;
             return (
               <TouchableOpacity
                 key={m.key}
-                style={[s.modeBtn, selectedMode === m.key && s.modeBtnOn, far && s.modeBtnFar]}
+                style={[s.modeBtn, active && s.modeBtnOn, far && s.modeBtnFar]}
                 onPress={() => !far && setSelectedMode(m.key)}
                 disabled={far}
+                activeOpacity={0.85}
               >
                 <Text style={s.modeBtnIcon}>{m.icon}</Text>
-                <Text style={[s.modeBtnLabel, selectedMode === m.key && s.modeBtnLabelOn]}>{m.label}</Text>
+                <Text style={[s.modeBtnLabel, active && s.modeBtnLabelOn]}>{m.label}</Text>
                 {etaLabel ? <Text style={[s.modeBtnEta, far && s.modeBtnEtaFar]}>{etaLabel}</Text> : null}
               </TouchableOpacity>
             );
@@ -197,71 +221,159 @@ export default function ShelterDetailsScreen() {
       )}
 
       <View style={s.actions}>
-        <TouchableOpacity
-          style={[s.navBtn, s.actionBtn, isEarlyWarning && tooFar(selectedMode) && s.navBtnDisabled]}
+        <Button
+          label="Navigate"
+          icon="🧭"
+          variant="primary"
           onPress={navigate}
           disabled={isEarlyWarning && tooFar(selectedMode)}
-        >
-          <Text style={s.navBtnText}>🧭 Navigate</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.reportBtn, s.actionBtn]} onPress={report}>
-          <Text style={s.reportBtnText}>⚠️ Report</Text>
-        </TouchableOpacity>
+          style={s.actionBtn}
+        />
+        <Button
+          label="Report"
+          icon="⚠️"
+          variant="danger"
+          onPress={report}
+          style={s.actionBtn}
+        />
         {isAdmin && (
-          <TouchableOpacity style={[s.updateBtn, s.actionBtn]} onPress={update}>
-            <Text style={s.updateBtnText}>✏️ Update</Text>
-          </TouchableOpacity>
+          <Button
+            label="Update"
+            icon="✏️"
+            variant="secondary"
+            onPress={update}
+            style={s.actionBtn}
+          />
         )}
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, last = false }: { label: string; value: string; last?: boolean }) {
   return (
-    <View style={s.dataRow}>
+    <View style={[s.dataRow, last && s.dataRowLast]}>
       <Text style={s.dataLabel}>{label}</Text>
       <Text style={s.dataValue} numberOfLines={3}>{value}</Text>
     </View>
   );
 }
 
+function StatusChip({
+  icon, label, tone,
+}: {
+  icon: string;
+  label: string;
+  tone: 'success' | 'danger' | 'warning' | 'neutral';
+}) {
+  const toneStyle = {
+    success: { bg: Palette.successSoft, fg: Palette.success },
+    danger:  { bg: Palette.dangerSoft,  fg: Palette.danger  },
+    warning: { bg: Palette.warningSoft, fg: Palette.warning },
+    neutral: { bg: Palette.bgSubtle,    fg: Palette.textSecondary },
+  }[tone];
+  return (
+    <View style={[s.chip, { backgroundColor: toneStyle.bg, borderColor: toneStyle.fg }]}>
+      <Text style={s.chipIcon}>{icon}</Text>
+      <Text style={[s.chipText, { color: toneStyle.fg }]}>{label}</Text>
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
-  container:   { flex: 1, backgroundColor: '#fff' },
-  header:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#eee' },
-  backBtn:     { padding: 6, width: 30 },
-  backIcon:    { fontSize: 32, color: '#1a73e8', lineHeight: 32 },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600', color: '#222' },
-
   scroll:        { flex: 1 },
-  scrollContent: { padding: 20 },
-  title:         { fontSize: 24, fontWeight: '700', color: '#222', marginBottom: 14 },
-  iconRow:       { flexDirection: 'row', gap: 8, marginBottom: 14 },
-  bigIcon:       { fontSize: 26 },
-  badgeRow:      { flexDirection: 'row', gap: 8, marginBottom: 22, flexWrap: 'wrap' },
-  badge:         { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, borderWidth: 1 },
-  badgeTxt:      { fontSize: 14, fontWeight: '600' },
+  scrollContent: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop:        Spacing.sm,
+    paddingBottom:     Spacing.xl,
+  },
 
-  dataRow:   { flexDirection: 'row', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: '#eee' },
-  dataLabel: { width: 140, fontSize: 14, color: '#888', fontWeight: '500' },
-  dataValue: { flex: 1, fontSize: 15, color: '#222' },
+  title: {
+    ...Typography.title,
+    color: Palette.textPrimary,
+    marginBottom: Spacing.md,
+  },
 
-  modeRow:        { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 0.5, borderTopColor: '#eee' },
-  modeBtn:        { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 12, borderWidth: 1.5, borderColor: '#e0e0e0', backgroundColor: '#fafafa' },
-  modeBtnOn:      { borderColor: '#1a73e8', backgroundColor: '#e8f0fe' },
+  sectionLabel: {
+    ...Typography.sectionLabel,
+    color: Palette.textTertiary,
+    marginBottom: Spacing.sm,
+  },
+
+  chipsRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    flexWrap: 'wrap',
+    marginBottom: Spacing.lg,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    gap: Spacing.xs,
+  },
+  chipIcon: { fontSize: 14 },
+  chipText: {
+    ...Typography.bodyStrong,
+    fontSize: 13,
+  },
+
+  dataRow: {
+    flexDirection: 'row',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Palette.borderSubtle,
+  },
+  dataRowLast: { borderBottomWidth: 0 },
+  dataLabel: {
+    width: 140,
+    ...Typography.caption,
+    color: Palette.textSecondary,
+    fontWeight: '600',
+  },
+  dataValue: {
+    flex: 1,
+    ...Typography.body,
+    color: Palette.textPrimary,
+  },
+
+  // Transport mode picker — only shown during an early warning.
+  modeRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Palette.borderSubtle,
+  },
+  modeBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    borderColor: Palette.borderSubtle,
+    backgroundColor: Palette.bgSubtle,
+  },
+  modeBtnOn:      { borderColor: Palette.brand, backgroundColor: Palette.brandSoft },
   modeBtnFar:     { opacity: 0.4 },
   modeBtnIcon:    { fontSize: 20, marginBottom: 2 },
-  modeBtnLabel:   { fontSize: 12, fontWeight: '600', color: '#555' },
-  modeBtnLabelOn: { color: '#1a73e8' },
-  modeBtnEta:     { fontSize: 11, color: '#888', marginTop: 2 },
-  modeBtnEtaFar:  { color: '#E24B4A' },
-  navBtnDisabled: { backgroundColor: '#93b9f5' },
-  actions:    { flexDirection: 'row', gap: 8, padding: 16, borderTopWidth: 0.5, borderTopColor: '#eee' },
-  actionBtn:  { flex: 1 },
-  navBtn:     { backgroundColor: '#1a73e8', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  navBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  reportBtn:  { backgroundColor: '#fff', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1.5, borderColor: '#E24B4A' },
-  reportBtnText: { color: '#E24B4A', fontSize: 15, fontWeight: '700' },
-  updateBtn:  { backgroundColor: '#fff', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1.5, borderColor: '#378ADD' },
-  updateBtnText: { color: '#378ADD', fontSize: 15, fontWeight: '700' },
+  modeBtnLabel:   { ...Typography.small, color: Palette.textSecondary, fontWeight: '600' },
+  modeBtnLabelOn: { color: Palette.brand },
+  modeBtnEta:     { ...Typography.small, color: Palette.textTertiary, marginTop: 2 },
+  modeBtnEtaFar:  { color: Palette.danger },
+
+  actions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    padding: Spacing.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Palette.borderSubtle,
+    backgroundColor: Palette.bg,
+  },
+  actionBtn: { flex: 1 },
 });

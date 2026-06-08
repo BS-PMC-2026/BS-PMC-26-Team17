@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/context/auth';
@@ -88,9 +89,15 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
+  // SafeAreaProvider must wrap the whole tree so the shared `Screen`
+  // component can read real insets (iPhone notch, Android gesture-nav)
+  // through `useContext(SafeAreaInsetsContext)`. Without it, Screen falls
+  // back to zero insets and the layout sits under the system chrome.
   return (
-    <AuthProvider>
-      <RootLayoutNav />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <RootLayoutNav />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

@@ -17,10 +17,15 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
+
 import { useAuth } from '@/context/auth';
 import { OrefZonesService } from '@/services/OrefZonesService';
+import Button from '@/components/ui/Button';
+import Card from '@/components/ui/Card';
+import Screen from '@/components/ui/Screen';
+import ScreenHeader from '@/components/ui/ScreenHeader';
+import { Palette, Radius, Shadow, Spacing, Typography } from '@/constants/theme';
 
 type NominatimResult = {
   display_name: string;
@@ -86,7 +91,6 @@ function neighborhoodFromSuggestion(r: NominatimResult): string {
 }
 
 export default function BuildingRegistrationScreen() {
-  const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
   const [address, setAddress] = useState('');
@@ -352,23 +356,16 @@ export default function BuildingRegistrationScreen() {
   };
 
   return (
-    <ScrollView
-      style={[styles.container, { paddingTop: insets.top }]}
-      contentContainerStyle={{ paddingBottom: 40 }}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View style={styles.headerRow}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Text style={styles.backIcon}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.header}>Register Building</Text>
-        <View style={{ width: 36 }} />
-      </View>
-
-      <Text style={styles.intro}>
-        Fill in your building&apos;s details. An admin will review your registration
-        before it becomes visible on the map.
-      </Text>
+    <Screen variant="light">
+      <ScreenHeader title="Register Building" />
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.intro}>
+          Fill in your building&apos;s details. An admin will review your registration
+          before it becomes visible on the map.
+        </Text>
 
       {/* Address */}
       <View style={styles.section}>
@@ -382,7 +379,7 @@ export default function BuildingRegistrationScreen() {
             autoCorrect={false}
             autoCapitalize="none"
           />
-          {searching && <ActivityIndicator size="small" color="#0a7ea4" style={styles.inputSpinner} />}
+          {searching && <ActivityIndicator size="small" color={Palette.brand} style={styles.inputSpinner} />}
         </View>
         {suggestions.length > 0 && (
           <View style={styles.suggestions}>
@@ -478,7 +475,7 @@ export default function BuildingRegistrationScreen() {
           disabled={picking}
         >
           {picking ? (
-            <ActivityIndicator color="#1a73e8" />
+            <ActivityIndicator color={Palette.brand} />
           ) : (
             <Text style={styles.pickBtnText} numberOfLines={1}>
               {pickedFile ? `📎 ${pickedFile.name}` : '📎 Pick document'}
@@ -486,65 +483,102 @@ export default function BuildingRegistrationScreen() {
           )}
         </TouchableOpacity>
         {pickedFile && (
-          <TouchableOpacity onPress={() => setPickedFile(null)} style={{ marginTop: 6 }}>
-            <Text style={{ color: '#e24b4a', fontSize: 13 }}>Remove</Text>
+          <TouchableOpacity onPress={() => setPickedFile(null)} style={{ marginTop: Spacing.xs }}>
+            <Text style={{ color: Palette.danger, ...Typography.caption }}>Remove</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      <TouchableOpacity
-        style={[styles.submitBtn, submitting && { opacity: 0.6 }]}
+      <Button
+        label="Submit Registration"
+        variant="primary"
         onPress={submit}
+        loading={submitting}
         disabled={submitting}
-      >
-        {submitting ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.submitBtnText}>Submit Registration</Text>
-        )}
-      </TouchableOpacity>
-    </ScrollView>
+        style={styles.submitCta}
+      />
+      </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#181818', padding: 20 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
-  header: { fontSize: 22, fontWeight: 'bold', color: '#333', flex: 1, textAlign: 'center' },
-  backBtn: {
-    width: 36, height: 36, borderRadius: 18, backgroundColor: '#f2f2f2',
-    alignItems: 'center', justifyContent: 'center',
+  scrollContent: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop:        Spacing.md,
+    paddingBottom:     Spacing.xxxl,
   },
-  backIcon: { fontSize: 28, color: '#1a73e8', lineHeight: 30, marginTop: -2 },
-  intro: { color: '#ccc', fontSize: 13, marginBottom: 16, lineHeight: 18 },
-  section: { marginBottom: 20 },
-  label: { fontSize: 16, fontWeight: '600', color: '#eee', marginBottom: 6 },
-  subtext: { fontSize: 12, color: '#999', marginBottom: 8 },
+  intro: {
+    ...Typography.body,
+    color: Palette.textSecondary,
+    marginBottom: Spacing.lg,
+    lineHeight: 20,
+  },
+  section: { marginBottom: Spacing.lg },
+  label: {
+    ...Typography.subheading,
+    color: Palette.textPrimary,
+    marginBottom: Spacing.xs,
+  },
+  subtext: {
+    ...Typography.caption,
+    color: Palette.textSecondary,
+    marginBottom: Spacing.sm,
+  },
   inputWrapper: { position: 'relative' },
   input: {
-    backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd',
-    borderRadius: 8, padding: 12, fontSize: 16,
+    backgroundColor: Palette.bgSubtle,
+    borderWidth: 1,
+    borderColor: Palette.borderSubtle,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    ...Typography.body,
+    color: Palette.textPrimary,
   },
-  inputSpinner: { position: 'absolute', right: 12, top: 14 },
+  inputSpinner: { position: 'absolute', right: Spacing.md, top: 14 },
   suggestions: {
-    backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd',
-    borderRadius: 8, marginTop: 6, overflow: 'hidden',
+    backgroundColor: Palette.card,
+    borderWidth: 1,
+    borderColor: Palette.borderSubtle,
+    borderRadius: Radius.md,
+    marginTop: Spacing.xs,
+    overflow: 'hidden',
+    ...Shadow.sm,
   },
   suggestionRow: {
-    paddingHorizontal: 12, paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#eee',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Palette.borderSubtle,
   },
-  suggestionText: { fontSize: 15, color: '#222' },
-  fieldOk: { color: '#1D9E75', fontSize: 12, marginTop: 6, fontWeight: '600' },
-  fieldErr: { color: '#e24b4a', fontSize: 13, marginTop: 6, fontWeight: '600', lineHeight: 18 },
+  suggestionText: {
+    ...Typography.body,
+    color: Palette.textPrimary,
+  },
+  fieldOk: {
+    ...Typography.caption,
+    color: Palette.success,
+    marginTop: Spacing.xs,
+    fontWeight: '600',
+  },
+  fieldErr: {
+    ...Typography.caption,
+    color: Palette.danger,
+    marginTop: Spacing.xs,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
   pickBtn: {
-    backgroundColor: '#fff', paddingVertical: 14, borderRadius: 8,
-    alignItems: 'center', borderWidth: 1.5, borderColor: '#1a73e8',
+    backgroundColor: Palette.card,
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: Palette.brand,
   },
-  pickBtnText: { color: '#1a73e8', fontSize: 15, fontWeight: '600' },
-  submitBtn: {
-    backgroundColor: '#1a73e8', padding: 15, borderRadius: 8,
-    alignItems: 'center', marginTop: 10,
+  pickBtnText: {
+    ...Typography.bodyStrong,
+    color: Palette.brand,
   },
-  submitBtnText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+  submitCta: { marginTop: Spacing.sm },
 });

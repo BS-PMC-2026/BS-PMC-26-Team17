@@ -18,10 +18,11 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { API_URL } from '@/config';
+import Screen from '@/components/ui/Screen';
+import ScreenHeader from '@/components/ui/ScreenHeader';
+import { Palette, Radius, Spacing, Typography } from '@/constants/theme';
 
 type Role = 'user' | 'assistant';
 type Message = { id: string; role: Role; content: string };
@@ -36,7 +37,6 @@ let _idCounter = 0;
 const nextId = () => `m_${Date.now()}_${++_idCounter}`;
 
 export default function ChatScreen() {
-  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: nextId(),
@@ -122,150 +122,133 @@ export default function ChatScreen() {
   }, []);
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
-    >
-      <View style={styles.headerRow}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.back()}
-          testID="back-button"
-          accessibilityLabel="Back"
-        >
-          <Text style={styles.backIcon}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.header}>Chat</Text>
-        <View style={{ width: 36 }} />
-      </View>
-
-      <FlatList
-        ref={listRef}
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        data={messages}
-        keyExtractor={(m) => m.id}
-        renderItem={renderItem}
-        onContentSizeChange={scrollToEnd}
-      />
-
-      {loading && (
-        <View style={styles.loadingRow}>
-          <ActivityIndicator size="small" color="#0a7ea4" />
-          <Text style={styles.loadingText}>Thinking…</Text>
-        </View>
-      )}
-
-      <View style={[styles.inputRow, { paddingBottom: insets.bottom + 8 }]}>
-        <TextInput
-          style={styles.input}
-          value={input}
-          onChangeText={setInput}
-          placeholder="Type a message…"
-          multiline
-          editable={!loading}
-          testID="chat-input"
+    <Screen variant="light">
+      <ScreenHeader title="Chat" />
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+      >
+        <FlatList
+          ref={listRef}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          data={messages}
+          keyExtractor={(m) => m.id}
+          renderItem={renderItem}
+          onContentSizeChange={scrollToEnd}
         />
-        <TouchableOpacity
-          onPress={send}
-          disabled={!input.trim() || loading}
-          style={[
-            styles.sendBtn,
-            (!input.trim() || loading) && styles.sendBtnDisabled,
-          ]}
-          testID="chat-send"
-        >
-          <Text style={styles.sendBtnText}>Send</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+
+        {loading && (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color={Palette.brand} />
+            <Text style={styles.loadingText}>Thinking…</Text>
+          </View>
+        )}
+
+        <View style={styles.inputRow}>
+          <TextInput
+            style={styles.input}
+            value={input}
+            onChangeText={setInput}
+            placeholder="Type a message…"
+            placeholderTextColor={Palette.textTertiary}
+            multiline
+            editable={!loading}
+            testID="chat-input"
+          />
+          <TouchableOpacity
+            onPress={send}
+            disabled={!input.trim() || loading}
+            style={[
+              styles.sendBtn,
+              (!input.trim() || loading) && styles.sendBtnDisabled,
+            ]}
+            testID="chat-send"
+            activeOpacity={0.85}
+          >
+            <Text style={styles.sendBtnText}>Send</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backIcon: { fontSize: 28, color: '#0a7ea4' },
-  header: { fontSize: 18, fontWeight: '700', color: '#222' },
-
+  flex: { flex: 1 },
   list: { flex: 1 },
-  listContent: { padding: 12, paddingBottom: 20 },
+  listContent: { padding: Spacing.md, paddingBottom: Spacing.lg },
 
   bubble: {
     maxWidth: '80%',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    marginBottom: 8,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    marginBottom: Spacing.sm,
   },
   userBubble: {
-    backgroundColor: '#0a7ea4',
+    backgroundColor: Palette.brand,
     alignSelf: 'flex-end',
-    borderBottomRightRadius: 4,
+    borderBottomRightRadius: Radius.sm,
   },
   assistantBubble: {
-    backgroundColor: '#f1f3f5',
+    backgroundColor: Palette.bgSubtle,
     alignSelf: 'flex-start',
-    borderBottomLeftRadius: 4,
+    borderBottomLeftRadius: Radius.sm,
   },
   bubbleText: { fontSize: 15, lineHeight: 20 },
-  userText: { color: '#fff' },
-  assistantText: { color: '#222' },
+  userText:      { color: Palette.brandOn },
+  assistantText: { color: Palette.textPrimary },
 
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 6,
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.xs,
   },
-  loadingText: { color: '#666', marginLeft: 8, fontSize: 13 },
+  loadingText: {
+    ...Typography.caption,
+    color: Palette.textSecondary,
+    marginLeft: Spacing.sm,
+  },
 
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 10,
-    paddingTop: 8,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#eee',
-    backgroundColor: '#fff',
+    borderTopColor: Palette.borderSubtle,
+    backgroundColor: Palette.bg,
   },
   input: {
     flex: 1,
     minHeight: 40,
     maxHeight: 120,
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 10,
-    fontSize: 15,
-    backgroundColor: '#fafafa',
+    borderColor: Palette.borderSubtle,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.sm,
+    ...Typography.body,
+    color: Palette.textPrimary,
+    backgroundColor: Palette.bgSubtle,
   },
   sendBtn: {
-    marginLeft: 8,
-    paddingHorizontal: 18,
+    marginLeft: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: '#0a7ea4',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.brand,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  sendBtnDisabled: { backgroundColor: '#9ec5d4' },
-  sendBtnText: { color: '#fff', fontWeight: '700' },
+  sendBtnDisabled: { opacity: 0.5 },
+  sendBtnText: {
+    color: Palette.brandOn,
+    fontWeight: '700',
+  },
 });

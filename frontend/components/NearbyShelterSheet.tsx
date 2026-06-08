@@ -70,17 +70,45 @@ function isUsable(
   needsAccessible: boolean,
   hasPets: boolean,
 ): boolean {
+  // Hard exclusions — the user must not be sent to a shelter they can't
+  // physically enter. Closed and locked shelters are dropped from the
+  // pre-alarm list and the siren auto-route alike.
   if (s.accessStatus === 'closed' || s.accessStatus === 'locked') return false;
   if (s.shouldBeOpen === false) return false;
+
+  // Personal preferences that aren't absolute — accessible-only and no-pets.
   if (needsAccessible && !s.isAccessible) return false;
   if (hasPets && s.petIssueReported !== false) return false;
-  const available = (s.capacity ?? 0) - (s.reservedPlaces ?? 0) - (s.actualOccupancy ?? 0);
-  if (available <= 5) return false;
+
+  // Capacity is intentionally NOT a filter. A full shelter is still a
+  // valid suggestion: the user may squeeze in, the count may be stale,
+  // and "stand outside a near-full shelter" beats "no shelter at all".
   return true;
 }
 
-const BASE_SPEED_MPM = 83; // metres per minute — average walking pace
-const MAX_ETA_MINUTES = 10;
+// Exported so the parent map screen can apply the *same* reachability ceiling
+// to the building fallback (`handleNoShelters`). Without that, a public-shelter
+// scan that finds nothing would silently route the user to a building 30 min
+// away instead of falling through to the safety-instructions overlay.
+export const BASE_SPEED_MPM = 83; // metres per minute — average walking pace
+export const MAX_ETA_MINUTES = 10;
+
+/**
+ * Per-mode walking-speed multiplier. Mirrors the in-component useMemo so the
+ * pre-alarm building fallback in map.tsx can reproduce the exact same ETA
+ * envelope used to filter shelters in the sheet.
+ */
+export function computeSpeedMultiplier(
+  mobilityType: string,
+  isAccessible: boolean,
+  childrenCount: number,
+): number {
+  if (mobilityType === 'driving') return 8;
+  if (mobilityType === 'cycling') return 2.5;
+  if (isAccessible) return 0.6;
+  if (childrenCount > 0) return 0.7;
+  return 1;
+}
 
 export default function NearbyShelterSheet({
   visible, onClose, onPick, shelters, userLocation, limit = 10, initialGroupSize = 1,
@@ -94,13 +122,10 @@ export default function NearbyShelterSheet({
     if (visible) setGroupSize(initialGroupSize);
   }, [visible, initialGroupSize]);
 
-  const speedMultiplier = useMemo(() => {
-    if (mobilityType === 'driving') return 8;
-    if (mobilityType === 'cycling') return 2.5;
-    if (isAccessible) return 0.6;
-    if (childrenCount > 0) return 0.7;
-    return 1;
-  }, [mobilityType, isAccessible, childrenCount]);
+  const speedMultiplier = useMemo(
+    () => computeSpeedMultiplier(mobilityType, isAccessible, childrenCount),
+    [mobilityType, isAccessible, childrenCount],
+  );
 
   console.log('[NearbyShelterSheet]', { speedMultiplier, childrenCount, isAccessible, hasPets, mobilityType });
 

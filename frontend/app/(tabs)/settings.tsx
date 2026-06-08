@@ -13,13 +13,17 @@ import {
   DeviceEventEmitter,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
 import {
   GEOFENCE_SETTINGS_CHANGED_EVENT,
   ACCESSIBILITY_SETTINGS_CHANGED_EVENT,
 } from '@/hooks/use-home-geofence';
+import Button from '@/components/ui/Button';
+import Card from '@/components/ui/Card';
+import Screen from '@/components/ui/Screen';
+import ScreenHeader from '@/components/ui/ScreenHeader';
+import { Palette, Radius, Shadow, Spacing, Typography } from '@/constants/theme';
 
 // Nominatim suggestion shape (the parts we care about)
 type NominatimResult = {
@@ -52,7 +56,6 @@ function formatSuggestion(r: NominatimResult): string {
 }
 
 export default function SettingsScreen() {
-  const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
 
   // Form state
@@ -256,16 +259,23 @@ export default function SettingsScreen() {
     }
   };
 
-  const TransportButton = ({ mode, label }: { mode: string; label: string }) => (
-    <TouchableOpacity
-      style={[styles.transportBtn, transportMode === mode && styles.transportBtnActive]}
-      onPress={() => setTransportMode(mode)}
-    >
-      <Text style={[styles.transportBtnText, transportMode === mode && styles.transportBtnTextActive]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
+  // Segmented control for the transport mode. Three pills, the active one
+  // filled with the brand color. Keeps the look uniform with other "pick one
+  // of N" controls we'll add elsewhere (e.g. dashboard filters).
+  const TransportButton = ({ mode, label }: { mode: string; label: string }) => {
+    const active = transportMode === mode;
+    return (
+      <TouchableOpacity
+        style={[styles.transportBtn, active && styles.transportBtnActive]}
+        onPress={() => setTransportMode(mode)}
+        activeOpacity={0.85}
+      >
+        <Text style={[styles.transportBtnText, active && styles.transportBtnTextActive]}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
 
   // Show the home-not-set banner when there's no address with coords saved.
   // We err on the side of telling users that they'll get all alarms — the
@@ -274,329 +284,308 @@ export default function SettingsScreen() {
     address.trim() !== '' && homeLat != null && homeLng != null;
 
   return (
-    <ScrollView
-      style={[styles.container, { paddingTop: insets.top }]}
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ paddingBottom: 40 }}
-    >
-      {/* Custom header row — Back arrow + title.
-          The sidebar was removed, so screens navigate via push/back instead. */}
-      <View style={styles.headerRow}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.back()}
-          testID="back-button"
-          accessibilityLabel="Back"
-        >
-          <Text style={styles.backIcon}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.header}>Emergency Settings</Text>
-        <View style={{ width: 36 }} />
-      </View>
-
-      {!homeIsConfigured && (
-        <View style={styles.warningBanner}>
-          <Text style={styles.warningText}>
-            ⚠️ Set your home address to enable the “Do Not Notify” radius and home-based features.
-            Without it you’ll receive every alarm.
-          </Text>
-        </View>
-      )}
-
-      {/* Address with autocomplete */}
-      <View style={styles.section}>
-        <Text style={styles.label}>Home Address</Text>
-        <Text style={styles.subtext}>
-          Start typing your street and pick a suggestion below.
-        </Text>
-
-        <View style={styles.inputWrapper}>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g., Herzl, Tel Aviv"
-            value={address}
-            onChangeText={onAddressChange}
-            autoCorrect={false}
-            autoCapitalize="none"
-          />
-          {searching && (
-            <ActivityIndicator
-              size="small"
-              color="#0a7ea4"
-              style={styles.inputSpinner}
-            />
-          )}
-        </View>
-
-        {/* Suggestions dropdown */}
-        {suggestions.length > 0 && (
-          <View style={styles.suggestions}>
-            {suggestions.map((r, i) => (
-              <TouchableOpacity
-                key={`${r.lat}-${r.lon}-${i}`}
-                style={styles.suggestionRow}
-                onPress={() => pickSuggestion(r)}
-              >
-                <Text style={styles.suggestionText} numberOfLines={2}>
-                  {formatSuggestion(r)}
-                </Text>
-              </TouchableOpacity>
-            ))}
+    <Screen variant="light">
+      <ScreenHeader title="Emergency Settings" />
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        {!homeIsConfigured && (
+          <View style={styles.warningBanner}>
+            <Text style={styles.warningText}>
+              ⚠️ Set your home address to enable the “Do Not Notify” radius and home-based
+              features. Without it you’ll receive every alarm.
+            </Text>
           </View>
         )}
 
-        {address.trim() !== '' && !addressIsPicked && (
-          <Text style={styles.fieldWarn}>
-            Please pick an address from the suggestions to enable home-based features.
-          </Text>
-        )}
-        {addressIsPicked && (
-          <Text style={styles.fieldOk}>✓ Address confirmed</Text>
-        )}
-      </View>
+        {/* Address with autocomplete */}
+        <Card>
+          <Text style={styles.label}>Home Address</Text>
+          <Text style={styles.subtext}>Start typing your street and pick a suggestion below.</Text>
 
-      {/* Radius */}
-      <View style={styles.section}>
-        <Text style={styles.label}>Do Not Notify Radius (meters)</Text>
-        <Text style={styles.subtext}>
-          Ignore alerts if you are within this radius from your address. Leave empty to always receive alerts.
-        </Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g., 500"
-          keyboardType="numeric"
-          value={radius}
-          onChangeText={setRadius}
-        />
-      </View>
+          <View style={styles.inputWrapper}>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g., Herzl, Tel Aviv"
+              placeholderTextColor={Palette.textTertiary}
+              value={address}
+              onChangeText={onAddressChange}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            {searching && (
+              <ActivityIndicator
+                size="small"
+                color={Palette.brand}
+                style={styles.inputSpinner}
+              />
+            )}
+          </View>
 
-      {/* Transportation */}
-      <View style={styles.section}>
-        <Text style={styles.label}>Default Transportation</Text>
-        <Text style={styles.subtext}>
-          When receiving an alert, this mode will be used for navigation.
-        </Text>
-        <View style={styles.transportRow}>
-          <TransportButton mode="walking" label="Walking" />
-          <TransportButton mode="cycling" label="Cycling" />
-          <TransportButton mode="driving" label="Driving" />
-        </View>
-      </View>
+          {/* Suggestions dropdown */}
+          {suggestions.length > 0 && (
+            <View style={styles.suggestions}>
+              {suggestions.map((r, i) => (
+                <TouchableOpacity
+                  key={`${r.lat}-${r.lon}-${i}`}
+                  style={styles.suggestionRow}
+                  onPress={() => pickSuggestion(r)}
+                >
+                  <Text style={styles.suggestionText} numberOfLines={2}>
+                    {formatSuggestion(r)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
 
-      {/* Accessibility */}
-      <View style={[styles.section, styles.rowSection]}>
-        <View style={styles.textColumn}>
-          <Text style={styles.label}>Accessible Shelter Only</Text>
-          <Text style={styles.subtext}>Prioritize street-level or ramped safe zones.</Text>
-        </View>
-        <Switch value={isHandicapped} onValueChange={setIsHandicapped} />
-      </View>
-
-      {/* Single save button */}
-      <TouchableOpacity style={styles.saveButton} onPress={saveSettings}>
-        <Text style={styles.saveButtonText}>Save Preferences</Text>
-      </TouchableOpacity>
-
-      {/* Building Manager Registration (BSPMT17-371 / 374) */}
-      <View style={styles.adminSection}>
-        <Text style={styles.adminSectionTitle}>Building Manager</Text>
-        {myRegistration ? (
-          <>
-            <Text style={styles.fieldOk}>
-              ✅ Building registered (status: {myRegistration.registrationStatus})
+          {address.trim() !== '' && !addressIsPicked && (
+            <Text style={styles.fieldWarn}>
+              Please pick an address from the suggestions to enable home-based features.
             </Text>
-            <TouchableOpacity
-              style={[styles.logoutButton, { marginTop: 10 }]}
-              onPress={() => router.push('/cancel-registration' as any)}
-              testID="cancel-building-registration"
-            >
-              <Text style={styles.logoutButtonText}>Cancel Registration</Text>
-            </TouchableOpacity>
+          )}
+          {addressIsPicked && (
+            <Text style={styles.fieldOk}>✓ Address confirmed</Text>
+          )}
+        </Card>
+
+        {/* Radius */}
+        <Card>
+          <Text style={styles.label}>Do Not Notify Radius (meters)</Text>
+          <Text style={styles.subtext}>
+            Ignore alerts if you are within this radius from your address. Leave empty to
+            always receive alerts.
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g., 500"
+            placeholderTextColor={Palette.textTertiary}
+            keyboardType="numeric"
+            value={radius}
+            onChangeText={setRadius}
+          />
+        </Card>
+
+        {/* Transportation */}
+        <Card>
+          <Text style={styles.label}>Default Transportation</Text>
+          <Text style={styles.subtext}>
+            When receiving an alert, this mode will be used for navigation.
+          </Text>
+          <View style={styles.transportRow}>
+            <TransportButton mode="walking" label="Walking" />
+            <TransportButton mode="cycling" label="Cycling" />
+            <TransportButton mode="driving" label="Driving" />
+          </View>
+        </Card>
+
+        {/* Accessibility */}
+        <Card>
+          <View style={styles.rowSection}>
+            <View style={styles.textColumn}>
+              <Text style={styles.label}>Accessible Shelter Only</Text>
+              <Text style={styles.subtext}>Prioritize street-level or ramped safe zones.</Text>
+            </View>
+            <Switch
+              value={isHandicapped}
+              onValueChange={setIsHandicapped}
+              trackColor={{ false: Palette.borderStrong, true: Palette.brand }}
+              thumbColor={Palette.card}
+            />
+          </View>
+        </Card>
+
+        {/* Primary CTA */}
+        <Button
+          label="Save Preferences"
+          onPress={saveSettings}
+          variant="primary"
+          style={styles.primaryCta}
+        />
+
+        {/* Building Manager */}
+        <Text style={styles.sectionLabel}>Building Manager</Text>
+        <Card>
+          {myRegistration ? (
+            <>
+              <Text style={styles.fieldOk}>
+                ✅ Building registered (status: {myRegistration.registrationStatus})
+              </Text>
+              <Button
+                label="Cancel Registration"
+                onPress={() => router.push('/cancel-registration' as any)}
+                variant="danger"
+                style={styles.cardCta}
+                testID="cancel-building-registration"
+              />
+            </>
+          ) : (
+            <Button
+              label="Register as Building Manager"
+              icon="📋"
+              onPress={() => router.push('/building-registration' as any)}
+              variant="secondary"
+              testID="register-building-button"
+            />
+          )}
+        </Card>
+
+        {/* Admin */}
+        {user?.role === 'admin' && (
+          <>
+            <Text style={styles.sectionLabel}>Admin</Text>
+            <Card>
+              <View style={styles.adminStack}>
+                <Button
+                  label="Shelter Dashboard"
+                  icon="📋"
+                  onPress={() => router.push('/(tabs)/ShelterDashboard' as any)}
+                  variant="secondary"
+                  testID="shelter-dashboard-button"
+                />
+                <Button
+                  label="Buildings Dashboard"
+                  icon="🏢"
+                  onPress={() => router.push('/buildings-dashboard' as any)}
+                  variant="secondary"
+                  testID="buildings-dashboard-button"
+                />
+                <Button
+                  label="Send message to all users"
+                  icon="📣"
+                  onPress={() => router.push('/admin-broadcast' as any)}
+                  variant="primary"
+                  testID="admin-broadcast-button"
+                />
+              </View>
+            </Card>
           </>
-        ) : (
-          <TouchableOpacity
-            style={styles.adminBtn}
-            onPress={() => router.push('/building-registration' as any)}
-            testID="register-building-button"
-          >
-            <Text style={styles.adminBtnText}>📋 Register as Building Manager</Text>
-          </TouchableOpacity>
         )}
-      </View>
 
-      {/* Admin-only section. Without the sidebar there's no other entry
-          point to the dashboard, so we expose it here. */}
-      {user?.role === 'admin' && (
-        <View style={styles.adminSection}>
-          <Text style={styles.adminSectionTitle}>Admin</Text>
-          <TouchableOpacity
-            style={styles.adminBtn}
-            onPress={() => router.push('/(tabs)/ShelterDashboard' as any)}
-            testID="shelter-dashboard-button"
-          >
-            <Text style={styles.adminBtnText}>📋 Shelter Dashboard</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.adminBtn}
-            onPress={() => router.push('/buildings-dashboard' as any)}
-            testID="buildings-dashboard-button"
-          >
-            <Text style={styles.adminBtnText}>🏢 Buildings Dashboard</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Logout — moved here from the old Home placeholder so users can
-          sign out from the centralized Settings entry point. */}
-      {user?.role === 'admin' && (
-        <TouchableOpacity
-          style={styles.adminButton}
-          onPress={() => router.push('/admin-broadcast' as any)}
-          testID="admin-broadcast-button"
-        >
-          <Text style={styles.adminButtonText}>📣 Send message to all users</Text>
-        </TouchableOpacity>
-      )}
-
-      <TouchableOpacity
-        style={styles.logoutButton}
-        onPress={() => logout()}
-        testID="logout-button"
-      >
-        <Text style={styles.logoutButtonText}>🚪 Logout</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        <Button
+          label="Logout"
+          icon="🚪"
+          onPress={() => logout()}
+          variant="danger"
+          style={styles.logoutCta}
+          testID="logout-button"
+        />
+      </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#181818', padding: 20 },
-  header: { fontSize: 24, fontWeight: 'bold', color: '#333', flex: 1, textAlign: 'center' },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 18,
+  scroll:       { flex: 1 },
+  scrollContent:{
+    paddingHorizontal: Spacing.lg,
+    paddingTop:        Spacing.md,
+    paddingBottom:     Spacing.xxxl,
   },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f2f2f2',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backIcon: { fontSize: 28, color: '#1a73e8', lineHeight: 30, marginTop: -2 },
 
   warningBanner: {
-    backgroundColor: '#FFF4E5',
-    borderLeftWidth: 4,
-    borderLeftColor: '#FFA726',
-    padding: 12,
-    borderRadius: 6,
-    marginBottom: 20,
+    backgroundColor:  Palette.warningSoft,
+    borderLeftWidth:  4,
+    borderLeftColor:  Palette.warning,
+    padding:          Spacing.md,
+    borderRadius:     Radius.md,
+    marginBottom:     Spacing.lg,
   },
-  warningText: { color: '#7A4A00', fontSize: 13, lineHeight: 18 },
+  warningText: {
+    ...Typography.caption,
+    color: Palette.warning,
+  },
 
-  section: { marginBottom: 22 },
   rowSection: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  textColumn: { flex: 1, paddingRight: 10 },
-  label: { fontSize: 16, fontWeight: '600', color: '#444', marginBottom: 5 },
-  subtext: { fontSize: 12, color: '#666', marginBottom: 8 },
+  textColumn: { flex: 1, paddingRight: Spacing.md },
+
+  label: {
+    ...Typography.subheading,
+    color: Palette.textPrimary,
+    marginBottom: Spacing.xs,
+  },
+  subtext: {
+    ...Typography.caption,
+    color: Palette.textSecondary,
+    marginBottom: Spacing.md,
+  },
 
   inputWrapper: { position: 'relative' },
   input: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
+    backgroundColor: Palette.bgSubtle,
+    borderWidth:     1,
+    borderColor:     Palette.borderSubtle,
+    borderRadius:    Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical:   Spacing.md,
+    ...Typography.body,
+    color:           Palette.textPrimary,
   },
-  inputSpinner: { position: 'absolute', right: 12, top: 14 },
+  inputSpinner: { position: 'absolute', right: Spacing.md, top: 14 },
 
   suggestions: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    marginTop: 6,
-    overflow: 'hidden',
+    backgroundColor: Palette.card,
+    borderWidth:     1,
+    borderColor:     Palette.borderSubtle,
+    borderRadius:    Radius.md,
+    marginTop:       Spacing.sm,
+    overflow:        'hidden',
+    ...Shadow.sm,
   },
   suggestionRow: {
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingHorizontal: Spacing.md,
+    paddingVertical:   Spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
+    borderBottomColor: Palette.borderSubtle,
   },
-  suggestionText: { fontSize: 15, color: '#222' },
+  suggestionText: {
+    ...Typography.body,
+    color: Palette.textPrimary,
+  },
 
-  fieldWarn: { color: '#B26A00', fontSize: 12, marginTop: 6 },
-  fieldOk: { color: '#1D9E75', fontSize: 12, marginTop: 6, fontWeight: '600' },
+  fieldWarn: {
+    ...Typography.caption,
+    color: Palette.warning,
+    marginTop: Spacing.sm,
+  },
+  fieldOk: {
+    ...Typography.caption,
+    color: Palette.success,
+    marginTop: Spacing.sm,
+    fontWeight: '600',
+  },
 
-  transportRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
+  // Segmented control for the transport selector
+  transportRow: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm },
   transportBtn: {
     flex: 1,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#007AFF',
-    borderRadius: 8,
-    marginHorizontal: 4,
-    alignItems: 'center',
-    backgroundColor: '#fff',
+    paddingVertical: Spacing.md,
+    borderRadius:    Radius.md,
+    borderWidth:     1.5,
+    borderColor:     Palette.brand,
+    backgroundColor: Palette.card,
+    alignItems:      'center',
   },
-  transportBtnActive: { backgroundColor: '#007AFF' },
-  transportBtnText: { color: '#007AFF', fontWeight: '600' },
-  transportBtnTextActive: { color: '#fff' },
+  transportBtnActive: { backgroundColor: Palette.brand },
+  transportBtnText: {
+    ...Typography.bodyStrong,
+    color: Palette.brand,
+  },
+  transportBtnTextActive: { color: Palette.brandOn },
 
-  saveButton: {
-    backgroundColor: '#28a745',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 10,
+  // Section-label "All caps" header that sits above an admin/manager Card
+  sectionLabel: {
+    ...Typography.sectionLabel,
+    color:        Palette.textTertiary,
+    marginTop:    Spacing.xl,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.xs,
   },
-  saveButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
 
-  logoutButton: {
-    backgroundColor: '#e24b4a',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 30,
-  },
-  logoutButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
-
-  adminButton: {
-    backgroundColor: '#0a7ea4',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  adminButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-
-  adminSection: {
-    marginTop: 24,
-    paddingTop: 18,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#ddd',
-  },
-  adminSectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#888',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 10,
-  },
-  adminBtn: {
-    backgroundColor: '#fff',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#1a73e8',
-  },
-  adminBtnText: { color: '#1a73e8', fontSize: 16, fontWeight: '700' },
+  primaryCta:  { marginTop: Spacing.sm, marginBottom: Spacing.sm },
+  cardCta:     { marginTop: Spacing.md },
+  adminStack:  { gap: Spacing.md },
+  logoutCta:   { marginTop: Spacing.xl },
 });

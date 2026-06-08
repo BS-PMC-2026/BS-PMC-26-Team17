@@ -394,11 +394,26 @@ export default function NavigateScreen() {
       const json = await res.json();
       const approved = json.buildings || [];
       console.log('[checkAlternativeNeeded] buildings response:', json, 'approved:', approved);
-      approved.sort((a: any, b: any) =>
-        NavigationService.haversineM(userLocation, { latitude: a.lat, longitude: a.lng }) -
-        NavigationService.haversineM(userLocation, { latitude: b.lat, longitude: b.lng })
-      );
-      const closest = approved[0] ?? null;
+
+      // The shelter just failed the time check — the building has to clear
+      // the same gate, otherwise we'd reroute the user to a "fallback" that's
+      // also unreachable. Filter first, then pick closest of the reachable.
+      // If nothing's reachable, we leave alternativeBuilding=null and the
+      // overlay falls through to mode-specific safety instructions.
+      const reachable = approved
+        .map((b: any) => ({
+          b,
+          distM: NavigationService.haversineM(
+            userLocation,
+            { latitude: b.lat, longitude: b.lng },
+          ),
+        }))
+        .filter(({ distM }: { distM: number }) =>
+          NavigationService.calculateETA(distM, modeRef.current) <= alertTime,
+        )
+        .sort((a: any, b: any) => a.distM - b.distM);
+
+      const closest = reachable[0]?.b ?? null;
       setAlternativeBuilding(closest ? { address: closest.address, entranceCode: closest.entranceCode } : null);
       setShowAlternative(true);
       if (closest) {
@@ -414,6 +429,20 @@ export default function NavigateScreen() {
         } catch (e) {
           console.warn('[checkAlternativeNeeded] reroute to alternative building failed:', e);
         }
+      } else {
+        // No shelter AND no building reachable — the user is stranded. The
+        // safety-instructions overlay will tell them to take cover where
+        // they are; meanwhile we cancel the active route so the underlying
+        // map / step list don't keep nudging them toward a shelter they
+        // can't make in time. Without this, dismissing the overlay reveals
+        // a live "navigate to X" UI that contradicts the safety message.
+        polylineRef.current = [];
+        stepsRef.current    = [];
+        setSteps([]);
+        setEta('—');
+        setDistance('—');
+        etaSecondsRef.current = 0;
+        sendToWeb({ type: 'setRoute', data: { coords: [] } });
       }
     }
   };
@@ -778,13 +807,23 @@ export default function NavigateScreen() {
         initialGroupSize={initialReservationSize}
       />
 
-      {/* Alternative shelter / safety instructions overlay */}
+      {/* Alternative shelter / safety instructions overlay.
+          When there's no reachable alternative building either, dismissing
+          the overlay would otherwise reveal an empty navigation screen with
+          a cleared route. Send the user back to the map in that case so the
+          experience doesn't end on a blank navigate UI. */}
       {showAlternative && (
         <View style={s.altOverlay}>
           <View style={s.altCard}>
             <TouchableOpacity
               style={s.altClose}
-              onPress={() => setShowAlternative(false)}
+              onPress={() => {
+                if (alternativeBuilding) {
+                  setShowAlternative(false);
+                } else {
+                  router.back();
+                }
+              }}
               accessibilityLabel="סגור"
             >
               <Text style={s.altCloseIcon}>✕</Text>
