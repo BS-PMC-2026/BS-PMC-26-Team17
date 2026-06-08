@@ -15,7 +15,7 @@ const mk = (overrides: Partial<SheetShelter>): SheetShelter => ({
   latitude: 32.080,
   longitude: 34.781,
   accessStatus: 'open',
-  capacity: 100,   // ensure available spots > 5 so capacity filter passes
+  capacity: 100,   // default capacity — kept for the reservedPlaces display test
   ...overrides,
 });
 
@@ -96,12 +96,21 @@ describe('NearbyShelterSheet', () => {
   });
 
   it('keeps full shelters (full is still better than no shelter)', () => {
+    // Truly full: reservedPlaces + actualOccupancy === capacity → 0 available.
+    // The sheet must still surface this shelter — the user may still squeeze
+    // in, the count may be stale, and a packed shelter beats nothing.
     const { getByTestId, getByText } = render(
       <NearbyShelterSheet
         visible
         onClose={jest.fn()}
         onPick={jest.fn()}
-        shelters={[mk({ id: 'full-one', isFull: true })]}
+        shelters={[mk({
+          id: 'full-one',
+          isFull: true,
+          capacity: 100,
+          reservedPlaces: 60,
+          actualOccupancy: 40,
+        })]}
         userLocation={USER}
       />,
     );

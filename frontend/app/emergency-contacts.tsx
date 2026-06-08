@@ -17,8 +17,10 @@ import {
   Linking,
   Alert,
 } from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import Screen from '@/components/ui/Screen';
+import ScreenHeader from '@/components/ui/ScreenHeader';
+import { Palette, Radius, Spacing, Typography } from '@/constants/theme';
 
 type Contact = {
   name: string;
@@ -146,97 +148,66 @@ async function open(contact: Contact) {
 }
 
 export default function EmergencyContactsScreen() {
-  const insets = useSafeAreaInsets();
   return (
-    <ScrollView
-      style={[styles.container, { paddingTop: insets.top }]}
-      contentContainerStyle={{ paddingBottom: 40 }}
-    >
-      <View style={styles.headerRow}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.back()}
-          testID="back-button"
-          accessibilityLabel="Back"
-        >
-          <Text style={styles.backIcon}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.header}>🆘 Emergency contacts</Text>
-        <View style={{ width: 36 }} />
-      </View>
+    <Screen variant="light">
+      <ScreenHeader title="Emergency Contacts" />
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <Text style={styles.subhead}>
+          Tap any line to call (or open the chat for Sahar).
+        </Text>
 
-      <Text style={styles.subhead}>
-        Tap any line to call (or open the chat for Sahar).
-      </Text>
-
-      {SECTIONS.map((section) => (
-        <View key={section.title} style={styles.section}>
-          <Text style={styles.sectionTitle}>
-            {section.icon}  {section.title}
-          </Text>
-          {section.items.map((item) => (
-            <TouchableOpacity
-              key={`${section.title}-${item.name}`}
-              style={styles.row}
-              onPress={() => open(item)}
-              testID={`contact-${item.value}`}
-            >
-              <View style={styles.rowText}>
-                <Text style={styles.rowName}>{item.name}</Text>
-                <Text style={styles.rowDesc} numberOfLines={2}>
-                  {item.description}
+        {SECTIONS.map((section) => (
+          <View key={section.title} style={styles.section}>
+            <Text style={styles.sectionTitle}>
+              {section.icon}  {section.title}
+            </Text>
+            {section.items.map((item) => (
+              <TouchableOpacity
+                key={`${section.title}-${item.name}`}
+                style={styles.row}
+                onPress={() => open(item)}
+                testID={`contact-${item.value}`}
+                activeOpacity={0.85}
+              >
+                <View style={styles.rowText}>
+                  <Text style={styles.rowName}>{item.name}</Text>
+                  <Text style={styles.rowDesc} numberOfLines={2}>
+                    {item.description}
+                  </Text>
+                </View>
+                <Text style={styles.rowValue}>
+                  {item.kind === 'phone' ? `📞 ${item.value}` : '💬 Chat'}
                 </Text>
-              </View>
-              <Text style={styles.rowValue}>
-                {item.kind === 'phone' ? `📞 ${item.value}` : '💬 Open chat'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ))}
+              </TouchableOpacity>
+            ))}
+          </View>
+        ))}
 
-      <Text style={styles.disclaimer}>
-        For immediate danger, call 101 (MDA) or 100 (Police).{'\n'}
-        If you&apos;re in physical danger right now, take shelter first.
-      </Text>
-    </ScrollView>
+        <Text style={styles.disclaimer}>
+          For immediate danger, call 101 (MDA) or 100 (Police).{'\n'}
+          If you&apos;re in physical danger right now, take shelter first.
+        </Text>
+      </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backIcon: { fontSize: 28, color: '#c0392b' },
-  header: { fontSize: 18, fontWeight: '700', color: '#222' },
+  scrollContent: { paddingBottom: Spacing.xxxl },
 
   subhead: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 4,
-    color: '#666',
-    fontSize: 13,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.xs,
+    ...Typography.caption,
+    color: Palette.textSecondary,
   },
 
-  section: { paddingTop: 14, paddingHorizontal: 16 },
+  section: { paddingTop: Spacing.md, paddingHorizontal: Spacing.lg },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#222',
-    marginBottom: 8,
+    ...Typography.bodyStrong,
+    color: Palette.textPrimary,
+    marginBottom: Spacing.sm,
     letterSpacing: 0.3,
   },
 
@@ -244,29 +215,40 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    backgroundColor: '#fafafa',
-    borderRadius: 10,
-    marginBottom: 8,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    backgroundColor: Palette.card,
+    borderRadius: Radius.md,
+    marginBottom: Spacing.sm,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: Palette.borderSubtle,
   },
-  rowText: { flex: 1, paddingRight: 10 },
-  rowName: { fontSize: 15, fontWeight: '600', color: '#222' },
-  rowDesc: { fontSize: 12, color: '#666', marginTop: 2 },
-  rowValue: { fontSize: 14, fontWeight: '700', color: '#c0392b' },
+  rowText: { flex: 1, paddingRight: Spacing.sm },
+  rowName: {
+    ...Typography.body,
+    color: Palette.textPrimary,
+    fontWeight: '600',
+  },
+  rowDesc: {
+    ...Typography.small,
+    color: Palette.textSecondary,
+    marginTop: 2,
+  },
+  rowValue: {
+    ...Typography.bodyStrong,
+    color: Palette.danger,
+  },
 
   disclaimer: {
-    marginTop: 24,
-    marginHorizontal: 16,
-    padding: 12,
-    backgroundColor: '#fff4f4',
+    marginTop: Spacing.lg,
+    marginHorizontal: Spacing.lg,
+    padding: Spacing.md,
+    backgroundColor: Palette.dangerSoft,
     borderLeftWidth: 4,
-    borderLeftColor: '#c0392b',
-    borderRadius: 6,
-    color: '#7a1f1f',
-    fontSize: 12,
+    borderLeftColor: Palette.danger,
+    borderRadius: Radius.md,
+    color: Palette.danger,
+    ...Typography.small,
     lineHeight: 17,
   },
 });

@@ -3,10 +3,14 @@ import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   ActivityIndicator, Alert, Modal,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
 import { WebView } from 'react-native-webview';
+
+import Button from '@/components/ui/Button';
+import Card from '@/components/ui/Card';
+import Screen from '@/components/ui/Screen';
+import ScreenHeader from '@/components/ui/ScreenHeader';
+import { DarkPalette, Radius, Spacing, Typography } from '@/constants/theme';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -31,10 +35,10 @@ type Building = {
 type Filter = 'All' | 'pending' | 'approved' | 'rejected';
 
 const STATUS_COLORS: Record<string, string> = {
-  pending:   '#BA7517',
-  approved:  '#1D9E75',
-  rejected:  '#E24B4A',
-  cancelled: '#E24B4A',
+  pending:   DarkPalette.warning,
+  approved:  DarkPalette.success,
+  rejected:  DarkPalette.danger,
+  cancelled: DarkPalette.danger,
 };
 const STATUS_LABELS: Record<string, string> = {
   pending:   'Pending',
@@ -63,7 +67,6 @@ const badge = StyleSheet.create({
 });
 
 export default function BuildingsDashboard() {
-  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -208,156 +211,163 @@ export default function BuildingsDashboard() {
 
   if (!isAdmin) {
     return (
-      <View style={s.denied}>
-        <Text style={s.deniedText}>Access denied</Text>
-      </View>
+      <Screen variant="dark">
+        <View style={s.denied}>
+          <Text style={s.deniedText}>Access denied</Text>
+        </View>
+      </Screen>
     );
   }
 
   return (
-    <View style={[s.container, { paddingTop: Math.max(0, insets.top - 10) }]}>
-      {/* Header */}
-      <View style={s.topHeaderRow}>
-        <TouchableOpacity style={s.backBtn} onPress={() => router.back()} testID="back-button">
-          <Text style={s.backIcon}>‹</Text>
-        </TouchableOpacity>
-        <Text style={s.topHeaderTitle}>Buildings Dashboard</Text>
-        <View style={{ width: 36 }} />
-      </View>
+    <Screen variant="dark">
+      <ScreenHeader title="Buildings Dashboard" dark />
 
-      {/* Stats */}
-      <View style={s.statsRow}>
-        {[
-          { label: 'Pending',  value: pendingCount,  color: '#BA7517', main: false },
-          { label: 'Approved', value: approvedCount, color: '#1D9E75', main: false },
-          { label: 'Rejected', value: rejectedCount, color: '#E24B4A', main: false },
-          { label: 'Total',    value: totalCount,    color: '#fff',    main: true  },
-        ].map(c => (
-          <View key={c.label} style={[s.statCard, c.main && s.statMain]}>
-            <Text style={s.statLabel}>{c.label}</Text>
-            <Text style={[s.statValue, { color: c.color }]}>{c.value}</Text>
-          </View>
-        ))}
-      </View>
-
-      {/* Filter buttons */}
-      <View style={s.filterRow}>
-        {(['All', 'pending', 'approved', 'rejected'] as Filter[]).map(f => {
-          const active = filter === f;
-          const label  = f === 'All' ? 'All' : STATUS_LABELS[f];
-          return (
-            <TouchableOpacity
-              key={f}
-              style={[s.filterBtn, active && s.filterBtnOn]}
-              onPress={() => setFilter(f)}
-              testID={`filter-${f}`}
-            >
-              <Text style={[s.filterBtnTxt, active && s.filterBtnTxtOn]}>{label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* Table */}
-      {loading ? (
-        <ActivityIndicator style={{ marginTop: 40 }} color="#378ADD" />
-      ) : filtered.length === 0 ? (
-        <Text style={s.empty}>No buildings found</Text>
-      ) : (
-        <ScrollView horizontal showsHorizontalScrollIndicator style={{ flex: 1 }}>
-          <View style={{ minWidth: 840 }}>
-            {/* Table header */}
-            <View style={s.tableHeader}>
-              {[
-                { label: 'Address',       w: 160 },
-                { label: 'City',          w: 100 },
-                { label: 'Manager',       w: 130 },
-                { label: 'Status',        w: 100 },
-                { label: 'Entrance Code', w: 110 },
-                { label: 'Actions',       w: 240 },
-              ].map(col => (
-                <Text key={col.label} style={[s.headerCell, { width: col.w }]}>
-                  {col.label}
-                </Text>
-              ))}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={s.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Stats */}
+        <View style={s.statsRow}>
+          {[
+            { label: 'Pending',  value: pendingCount,  color: DarkPalette.warning, main: false },
+            { label: 'Approved', value: approvedCount, color: DarkPalette.success, main: false },
+            { label: 'Rejected', value: rejectedCount, color: DarkPalette.danger,  main: false },
+            { label: 'Total',    value: totalCount,    color: DarkPalette.textPrimary, main: true },
+          ].map(c => (
+            <View key={c.label} style={[s.statCard, c.main && s.statMain]}>
+              <Text style={s.statLabel}>{c.label}</Text>
+              <Text style={[s.statValue, { color: c.color }]}>{c.value}</Text>
             </View>
+          ))}
+        </View>
 
-            {/* Data rows */}
-            <ScrollView style={{ maxHeight: 480 }} nestedScrollEnabled>
-              {filtered.map((item, i) => (
-                <View key={item.id} style={[s.row, i % 2 === 0 && s.rowAlt]}>
-                  {/* Address */}
-                  <TouchableOpacity
-                    style={{ width: 160, paddingHorizontal: 4 }}
-                    onPress={() => setSelected(item)}
-                  >
-                    <Text style={s.cellBold} numberOfLines={2}>{item.address}</Text>
-                  </TouchableOpacity>
+        {/* Filter pills */}
+        <View style={s.filterRow}>
+          {(['All', 'pending', 'approved', 'rejected'] as Filter[]).map(f => {
+            const active = filter === f;
+            const label  = f === 'All' ? 'All' : STATUS_LABELS[f];
+            return (
+              <TouchableOpacity
+                key={f}
+                style={[s.filterBtn, active && s.filterBtnOn]}
+                onPress={() => setFilter(f)}
+                testID={`filter-${f}`}
+                activeOpacity={0.85}
+              >
+                <Text style={[s.filterBtnTxt, active && s.filterBtnTxtOn]}>{label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
-                  {/* City */}
-                  <Text style={[s.cell, { width: 100 }]} numberOfLines={1}>
-                    {item.city || '—'}
+        {/* Table */}
+        {loading ? (
+          <ActivityIndicator style={{ marginTop: 40 }} color={DarkPalette.brand} />
+        ) : filtered.length === 0 ? (
+          <Text style={s.empty}>No buildings found</Text>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator>
+            <View style={{ minWidth: 840 }}>
+              {/* Table header */}
+              <View style={s.tableHeader}>
+                {[
+                  { label: 'Address',       w: 160 },
+                  { label: 'City',          w: 100 },
+                  { label: 'Manager',       w: 130 },
+                  { label: 'Status',        w: 100 },
+                  { label: 'Entrance Code', w: 110 },
+                  { label: 'Actions',       w: 240 },
+                ].map(col => (
+                  <Text key={col.label} style={[s.headerCell, { width: col.w }]}>
+                    {col.label}
                   </Text>
+                ))}
+              </View>
 
-                  {/* Manager name */}
-                  <Text style={[s.cell, { width: 130 }]} numberOfLines={1}>
-                    {item.managerName || '—'}
-                  </Text>
-
-                  {/* Status */}
-                  <View style={[s.cellCenter, { width: 100 }]}>
-                    <StatusBadge status={item.registrationStatus} />
-                  </View>
-
-                  {/* Entrance code */}
-                  <Text style={[s.cell, { width: 110 }]} numberOfLines={1}>
-                    {item.entranceCode || '—'}
-                  </Text>
-
-                  {/* Actions */}
-                  <View style={[s.actionsCell, { width: 240 }]}>
-                    {item.registrationStatus === 'pending' && (
-                      <>
-                        <TouchableOpacity
-                          style={s.approveBtn}
-                          onPress={() => approve(item)}
-                          disabled={approving === item.id || rejecting === item.id}
-                          testID={`approve-${item.id}`}
-                        >
-                          {approving === item.id
-                            ? <ActivityIndicator size="small" color="#fff" />
-                            : <Text style={s.approveBtnTxt}>✓</Text>
-                          }
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={s.rejectBtn}
-                          onPress={() => reject(item)}
-                          disabled={rejecting === item.id || approving === item.id}
-                          testID={`reject-${item.id}`}
-                        >
-                          {rejecting === item.id
-                            ? <ActivityIndicator size="small" color="#fff" />
-                            : <Text style={s.rejectBtnTxt}>✕</Text>
-                          }
-                        </TouchableOpacity>
-                      </>
-                    )}
+              {/* Data rows */}
+              <ScrollView style={{ maxHeight: 480 }} nestedScrollEnabled>
+                {filtered.map((item, i) => (
+                  <View key={item.id} style={[s.row, i % 2 === 0 && s.rowAlt]}>
+                    {/* Address */}
                     <TouchableOpacity
-                      style={s.viewBtn}
-                      onPress={() => openForm(item)}
-                      testID={`view-form-${item.id}`}
+                      style={{ width: 160, paddingHorizontal: 4 }}
+                      onPress={() => setSelected(item)}
                     >
-                      <Text style={s.viewBtnTxt}>📄 Form</Text>
+                      <Text style={s.cellBold} numberOfLines={2}>{item.address}</Text>
                     </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        </ScrollView>
-      )}
 
-      <Text style={s.countLabel}>Showing {filtered.length} building{filtered.length !== 1 ? 's' : ''}</Text>
+                    {/* City */}
+                    <Text style={[s.cell, { width: 100 }]} numberOfLines={1}>
+                      {item.city || '—'}
+                    </Text>
+
+                    {/* Manager name */}
+                    <Text style={[s.cell, { width: 130 }]} numberOfLines={1}>
+                      {item.managerName || '—'}
+                    </Text>
+
+                    {/* Status */}
+                    <View style={[s.cellCenter, { width: 100 }]}>
+                      <StatusBadge status={item.registrationStatus} />
+                    </View>
+
+                    {/* Entrance code */}
+                    <Text style={[s.cell, { width: 110 }]} numberOfLines={1}>
+                      {item.entranceCode || '—'}
+                    </Text>
+
+                    {/* Actions — icon circles for ✓ / ✕ + a secondary button for the form */}
+                    <View style={[s.actionsCell, { width: 240 }]}>
+                      {item.registrationStatus === 'pending' && (
+                        <>
+                          <TouchableOpacity
+                            style={s.approveBtn}
+                            onPress={() => approve(item)}
+                            disabled={approving === item.id || rejecting === item.id}
+                            testID={`approve-${item.id}`}
+                            activeOpacity={0.85}
+                          >
+                            {approving === item.id
+                              ? <ActivityIndicator size="small" color={DarkPalette.textInverse} />
+                              : <Text style={s.approveBtnTxt}>✓</Text>
+                            }
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={s.rejectBtn}
+                            onPress={() => reject(item)}
+                            disabled={rejecting === item.id || approving === item.id}
+                            testID={`reject-${item.id}`}
+                            activeOpacity={0.85}
+                          >
+                            {rejecting === item.id
+                              ? <ActivityIndicator size="small" color={DarkPalette.textInverse} />
+                              : <Text style={s.rejectBtnTxt}>✕</Text>
+                            }
+                          </TouchableOpacity>
+                        </>
+                      )}
+                      <TouchableOpacity
+                        style={s.viewBtn}
+                        onPress={() => openForm(item)}
+                        testID={`view-form-${item.id}`}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={s.viewBtnTxt}>📄 Form</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          </ScrollView>
+        )}
+
+        <Text style={s.countLabel}>
+          Showing {filtered.length} building{filtered.length !== 1 ? 's' : ''}
+        </Text>
+      </ScrollView>
 
       {/* Detail Modal */}
       <Modal
@@ -365,50 +375,57 @@ export default function BuildingsDashboard() {
         animationType="slide"
         onRequestClose={() => setSelected(null)}
       >
-        <View style={[md.container, { paddingTop: insets.top }]}>
-          <View style={md.header}>
-            <View style={{ flex: 1 }}>
-              <Text style={md.title} numberOfLines={1}>{selected?.address}</Text>
-              <Text style={md.sub}>{selected?.city}{selected?.neighborhood ? `, ${selected.neighborhood}` : ''}</Text>
-            </View>
-            <TouchableOpacity style={md.closeBtn} onPress={() => setSelected(null)}>
-              <Text style={md.closeTxt}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
+        <Screen variant="dark">
+          <ScreenHeader
+            title={selected?.address ?? ''}
+            dark
+            onBack={() => setSelected(null)}
+          />
           <ScrollView contentContainerStyle={md.body}>
-            {[
-              { label: 'Manager',          value: selected?.managerName || selected?.managerUserId },
-              { label: 'Status',           value: selected?.registrationStatus },
-              { label: 'Entrance Code',    value: selected?.entranceCode },
-              { label: 'Apartments',       value: selected?.apartmentCount?.toString() },
-              { label: 'Shelter Location', value: selected?.shelterLocation },
-              { label: 'Registered At',    value: selected?.createdAt
-                  ? new Date(selected.createdAt).toLocaleString() : undefined },
-            ].map(row => row.value ? (
-              <View key={row.label} style={md.row}>
-                <Text style={md.rowLabel}>{row.label}</Text>
-                <Text style={md.rowValue}>{row.value}</Text>
-              </View>
-            ) : null)}
+            {!!selected?.city && (
+              <Text style={md.sub}>
+                {selected.city}{selected.neighborhood ? `, ${selected.neighborhood}` : ''}
+              </Text>
+            )}
 
-            <TouchableOpacity
-              style={md.formBtn}
+            <Card dark>
+              {[
+                { label: 'Manager',          value: selected?.managerName || selected?.managerUserId },
+                { label: 'Status',           value: selected?.registrationStatus },
+                { label: 'Entrance Code',    value: selected?.entranceCode },
+                { label: 'Apartments',       value: selected?.apartmentCount?.toString() },
+                { label: 'Shelter Location', value: selected?.shelterLocation },
+                { label: 'Registered At',    value: selected?.createdAt
+                    ? new Date(selected.createdAt).toLocaleString() : undefined },
+              ].map((row, i, arr) => row.value ? (
+                <View
+                  key={row.label}
+                  style={[md.row, i === arr.length - 1 && md.rowLast]}
+                >
+                  <Text style={md.rowLabel}>{row.label}</Text>
+                  <Text style={md.rowValue}>{row.value}</Text>
+                </View>
+              ) : null)}
+            </Card>
+
+            <Button
+              label="View Permit Document"
+              icon="📄"
+              variant="secondary"
               onPress={() => selected && openForm(selected)}
-            >
-              <Text style={md.formBtnTxt}>📄 View Permit Document</Text>
-            </TouchableOpacity>
+            />
 
             {selected?.registrationStatus === 'pending' && (
-              <TouchableOpacity
-                style={md.approveFullBtn}
+              <Button
+                label="Approve This Building"
+                icon="✓"
+                variant="success"
                 onPress={() => { setSelected(null); selected && approve(selected); }}
-              >
-                <Text style={md.approveFullBtnTxt}>✓ Approve This Building</Text>
-              </TouchableOpacity>
+                style={{ marginTop: Spacing.md }}
+              />
             )}
           </ScrollView>
-        </View>
+        </Screen>
       </Modal>
 
       {/* In-app document viewer (PDFs / images) */}
@@ -417,13 +434,12 @@ export default function BuildingsDashboard() {
         animationType="slide"
         onRequestClose={() => setViewing(null)}
       >
-        <View style={{ flex: 1, backgroundColor: '#181818', paddingTop: insets.top }}>
-          <View style={pdfStyles.header}>
-            <TouchableOpacity onPress={() => setViewing(null)} style={pdfStyles.backBtn}>
-              <Text style={pdfStyles.backIcon}>‹</Text>
-              <Text style={pdfStyles.backTxt}>Back</Text>
-            </TouchableOpacity>
-          </View>
+        <Screen variant="dark">
+          <ScreenHeader
+            title="Permit Document"
+            dark
+            onBack={() => setViewing(null)}
+          />
           {viewing && (
             <WebView
               source={{ uri: viewerUrl }}
@@ -441,29 +457,18 @@ export default function BuildingsDashboard() {
               onShouldStartLoadWithRequest={() => true}
               renderLoading={() => (
                 <View style={pdfStyles.loading}>
-                  <ActivityIndicator size="large" color="#0a7ea4" />
+                  <ActivityIndicator size="large" color={DarkPalette.brand} />
                 </View>
               )}
             />
           )}
-        </View>
+        </Screen>
       </Modal>
-    </View>
+    </Screen>
   );
 }
 
 const pdfStyles = StyleSheet.create({
-  header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12, paddingVertical: 10,
-    backgroundColor: '#222',
-  },
-  backBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12, paddingVertical: 10,
-  },
-  backIcon: { color: '#1a73e8', fontSize: 28, lineHeight: 30, marginTop: -2, marginRight: 4 },
-  backTxt: { color: '#1a73e8', fontSize: 16, fontWeight: '700' },
   loading: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff',
@@ -471,91 +476,203 @@ const pdfStyles = StyleSheet.create({
 });
 
 const s = StyleSheet.create({
-  container:      { flex: 1, backgroundColor: '#181818', padding: 14, paddingTop: 1 },
-  denied:         { flex: 1, backgroundColor: '#181818', alignItems: 'center', justifyContent: 'center' },
-  deniedText:     { color: '#E24B4A', fontSize: 20, fontWeight: '700' },
+  denied: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deniedText: {
+    ...Typography.title,
+    color: DarkPalette.danger,
+  },
 
-  topHeaderRow:   { flexDirection: 'row', alignItems: 'center', marginBottom: 12, marginTop: 4 },
-  backBtn:        { width: 36, height: 36, borderRadius: 18, backgroundColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' },
-  backIcon:       { fontSize: 28, color: '#fff', lineHeight: 30, marginTop: -2 },
-  topHeaderTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '700', color: '#fff' },
+  scrollContent: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop:        Spacing.md,
+    paddingBottom:     Spacing.xxxl,
+  },
 
-  statsRow: { flexDirection: 'row', gap: 12, marginBottom: 18, marginTop: -8 },
+  // Stats — four equal cards, "Total" slightly wider so the number reads
+  // as the primary metric.
+  statsRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
   statCard: {
-    flex: 1, height: 100, backgroundColor: '#242424', borderRadius: 16,
-    paddingHorizontal: 8, paddingTop: 8, paddingBottom: 14,
-    alignItems: 'center', justifyContent: 'flex-end', gap: 8,
-    borderWidth: 0.5, borderColor: '#333',
+    flex: 1,
+    minHeight: 96,
+    backgroundColor: DarkPalette.card,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.sm,
+    paddingTop:    Spacing.sm,
+    paddingBottom: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: Spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: DarkPalette.borderSubtle,
   },
-  statMain:  { flex: 1.3, borderColor: '#444' },
-  statLabel: { fontSize: 12, color: '#666', textAlign: 'center', height: 32 },
-  statValue: { fontSize: 28, fontWeight: '500' },
+  statMain:  { flex: 1.3, borderColor: DarkPalette.borderStrong },
+  statLabel: {
+    ...Typography.small,
+    color: DarkPalette.textTertiary,
+    textAlign: 'center',
+  },
+  statValue: { fontSize: 28, fontWeight: '600', lineHeight: 32 },
 
-  filterRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  // Filter pills
+  filterRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
   filterBtn: {
-    paddingHorizontal: 18, paddingVertical: 10, borderRadius: 24,
-    borderWidth: 0.5, borderColor: '#444', backgroundColor: '#2a2a2a',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: DarkPalette.borderSubtle,
+    backgroundColor: DarkPalette.card,
   },
-  filterBtnOn:    { borderColor: '#999', backgroundColor: '#3d3d3d' },
-  filterBtnTxt:   { fontSize: 15, color: '#aaa' },
-  filterBtnTxtOn: { color: '#fff', fontWeight: '600' },
+  filterBtnOn: {
+    borderColor: DarkPalette.brand,
+    backgroundColor: DarkPalette.brandSoft,
+  },
+  filterBtnTxt: {
+    ...Typography.bodyStrong,
+    color: DarkPalette.textSecondary,
+  },
+  filterBtnTxtOn: { color: DarkPalette.textPrimary },
 
+  // Table
   tableHeader: {
-    flexDirection: 'row', backgroundColor: '#242424',
-    borderTopLeftRadius: 12, borderTopRightRadius: 12,
-    borderWidth: 0.5, borderColor: '#333', paddingVertical: 12,
+    flexDirection: 'row',
+    backgroundColor: DarkPalette.card,
+    borderTopLeftRadius:  Radius.md,
+    borderTopRightRadius: Radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: DarkPalette.borderSubtle,
+    paddingVertical: Spacing.md,
   },
-  headerCell: { fontSize: 13, color: '#888', fontWeight: '500', textAlign: 'center', paddingHorizontal: 4, paddingVertical: 10 },
+  headerCell: {
+    ...Typography.small,
+    color: DarkPalette.textTertiary,
+    textAlign: 'center',
+    paddingHorizontal: Spacing.xs,
+    paddingVertical: Spacing.sm,
+  },
+  row: {
+    flexDirection: 'row',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: DarkPalette.borderSubtle,
+    backgroundColor: DarkPalette.bgSubtle,
+    alignItems: 'center',
+    minHeight: 64,
+  },
+  rowAlt:  { backgroundColor: DarkPalette.card },
+  cell: {
+    ...Typography.caption,
+    color: DarkPalette.textSecondary,
+    paddingHorizontal: Spacing.xs,
+    textAlign: 'center',
+  },
+  cellBold: {
+    ...Typography.bodyStrong,
+    fontSize: 13,
+    color: DarkPalette.textPrimary,
+    paddingHorizontal: Spacing.xs,
+  },
+  cellCenter: { paddingHorizontal: Spacing.xs, alignItems: 'center', justifyContent: 'center' },
 
-  row:     { flexDirection: 'row', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: '#222', backgroundColor: '#1c1c1c', alignItems: 'center', minHeight: 64 },
-  rowAlt:  { backgroundColor: '#1f1f1f' },
-  cell:    { fontSize: 13, color: '#ccc', paddingHorizontal: 4, textAlign: 'center' },
-  cellBold:   { fontSize: 13, color: '#fff', fontWeight: '500', paddingHorizontal: 4 },
-  cellCenter: { paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center' },
-
-  actionsCell: { flexDirection: 'row', gap: 6, paddingHorizontal: 4, alignItems: 'center' },
+  // Compact icon buttons in the actions column (✓ approve, ✕ reject) +
+  // a secondary "Form" button that uses the same outline pattern as the
+  // shared `Button` secondary variant.
+  actionsCell: { flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.xs, alignItems: 'center' },
   approveBtn: {
-    backgroundColor: '#1D9E75', borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 6, minWidth: 36, alignItems: 'center',
+    backgroundColor: DarkPalette.success,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    minWidth: 40,
+    alignItems: 'center',
   },
-  approveBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  approveBtnTxt: {
+    color: DarkPalette.textInverse,
+    fontSize: 14,
+    fontWeight: '700',
+  },
   rejectBtn: {
-    backgroundColor: '#E24B4A', borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 6, minWidth: 36, alignItems: 'center',
+    backgroundColor: DarkPalette.danger,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    minWidth: 40,
+    alignItems: 'center',
   },
-  rejectBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  rejectBtnTxt: {
+    color: DarkPalette.textInverse,
+    fontSize: 14,
+    fontWeight: '700',
+  },
   viewBtn: {
-    backgroundColor: '#2a2a2a', borderRadius: 8, borderWidth: 0.5, borderColor: '#555',
-    paddingHorizontal: 10, paddingVertical: 6, alignItems: 'center',
+    backgroundColor: 'transparent',
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    borderColor: DarkPalette.brand,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    alignItems: 'center',
   },
-  viewBtnTxt: { color: '#ccc', fontSize: 12, fontWeight: '600' },
+  viewBtnTxt: {
+    ...Typography.small,
+    color: DarkPalette.brand,
+  },
 
-  empty:      { color: '#666', textAlign: 'center', padding: 40, fontSize: 16 },
-  countLabel: { fontSize: 13, color: '#555', textAlign: 'left', marginTop: 12 },
+  empty: {
+    ...Typography.body,
+    color: DarkPalette.textTertiary,
+    textAlign: 'center',
+    padding: Spacing.xxl,
+  },
+  countLabel: {
+    ...Typography.caption,
+    color: DarkPalette.textTertiary,
+    marginTop: Spacing.md,
+    paddingHorizontal: Spacing.xs,
+  },
 });
 
+// Detail modal — uses the shared `Card dark` for the info block; only
+// row-internal styles live here so the modal body stays compact.
 const md = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#181818' },
-  header: {
-    flexDirection: 'row', padding: 20, paddingBottom: 16,
-    borderBottomWidth: 0.5, borderBottomColor: '#333', alignItems: 'flex-start',
+  body: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop:        Spacing.md,
+    paddingBottom:     Spacing.xxxl,
+    gap:               Spacing.md,
   },
-  title:    { fontSize: 20, fontWeight: '700', color: '#fff' },
-  sub:      { fontSize: 14, color: '#888', marginTop: 2 },
-  closeBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center', marginLeft: 12 },
-  closeTxt: { color: '#aaa', fontSize: 16 },
-  body:     { padding: 20, gap: 14 },
-  row:      { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#2a2a2a' },
-  rowLabel: { fontSize: 14, color: '#888', flex: 1 },
-  rowValue: { fontSize: 14, color: '#fff', fontWeight: '500', flex: 2, textAlign: 'right' },
-  formBtn: {
-    marginTop: 8, backgroundColor: '#2a2a2a', borderRadius: 12,
-    paddingVertical: 14, alignItems: 'center', borderWidth: 0.5, borderColor: '#555',
+  sub: {
+    ...Typography.body,
+    color: DarkPalette.textSecondary,
+    textAlign: 'center',
+    marginTop: -Spacing.xs,
+    marginBottom: Spacing.sm,
   },
-  formBtnTxt: { color: '#ccc', fontSize: 15, fontWeight: '600' },
-  approveFullBtn: {
-    marginTop: 12, backgroundColor: '#1D9E75', borderRadius: 12,
-    paddingVertical: 16, alignItems: 'center',
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: DarkPalette.borderSubtle,
   },
-  approveFullBtnTxt: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  rowLast: { borderBottomWidth: 0 },
+  rowLabel: {
+    ...Typography.body,
+    color: DarkPalette.textTertiary,
+    flex: 1,
+  },
+  rowValue: {
+    ...Typography.bodyStrong,
+    color: DarkPalette.textPrimary,
+    flex: 2,
+    textAlign: 'right',
+  },
 });

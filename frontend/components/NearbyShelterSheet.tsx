@@ -70,12 +70,19 @@ function isUsable(
   needsAccessible: boolean,
   hasPets: boolean,
 ): boolean {
+  // Hard exclusions — the user must not be sent to a shelter they can't
+  // physically enter. Closed and locked shelters are dropped from the
+  // pre-alarm list and the siren auto-route alike.
   if (s.accessStatus === 'closed' || s.accessStatus === 'locked') return false;
   if (s.shouldBeOpen === false) return false;
+
+  // Personal preferences that aren't absolute — accessible-only and no-pets.
   if (needsAccessible && !s.isAccessible) return false;
   if (hasPets && s.petIssueReported !== false) return false;
-  const available = (s.capacity ?? 0) - (s.reservedPlaces ?? 0) - (s.actualOccupancy ?? 0);
-  if (available <= 5) return false;
+
+  // Capacity is intentionally NOT a filter. A full shelter is still a
+  // valid suggestion: the user may squeeze in, the count may be stale,
+  // and "stand outside a near-full shelter" beats "no shelter at all".
   return true;
 }
 

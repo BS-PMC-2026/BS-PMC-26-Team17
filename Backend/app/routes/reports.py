@@ -29,7 +29,7 @@ async def _is_admin(user_id: str) -> bool:
     return bool(user and user.get("role") == "admin")
 
 # Distance (meters) within which a report is considered "verified"
-VERIFY_RADIUS_METERS = 50
+VERIFY_RADIUS_METERS = 100
 
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
