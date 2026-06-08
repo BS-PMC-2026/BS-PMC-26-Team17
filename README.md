@@ -15,11 +15,25 @@ A mobile app that helps people in Israel find and navigate to the nearest safe s
 - **Reports** — tap any shelter to file a report (access issue, capacity, cleanliness, damage, other). Reports include the reporter's location so managers can verify the report was made within 50 m of the shelter.
 - **Forgot password / OTP reset** — full email-based 3-step recovery flow (request code → verify → reset).
 - **Login / Register** with email & password.
+- **Early warning navigation** — when a civil-defense early warning is active, the app filters nearby shelters by estimated arrival time, accessibility, pet policy, and available capacity using demographic balancing.
+- **Emergency numbers page** — dedicated screen with emergency organization contact numbers.
+- **Number of people** — select how many people are navigating to reserve capacity at the shelter.
+- **Location simulator (joystick)** — joystick overlay for testing navigation without physically moving.
 
 ### For managers (admin role)
 - **Shelter Dashboard** — searchable, filterable table view of every shelter with cleanliness, accessibility, and last-report info.
 - **Add Shelter** — register new safe spaces.
 - **Verified reports** — reports automatically tagged `isVerified: true` when the reporter was physically near the shelter, helping triage real issues vs. false alarms.
+- **Broadcast messages** — admin can send important messages to all users.
+- **Real-time push notifications** — managers receive push notifications when shelter reports are filed.
+- **Building committee registration** — users can register as building committee representatives with supporting documents.
+- **Admin buildings dashboard** — admin can approve or reject building registrations and view the committee declaration certificate.
+- **Entrance code display** — approved building entrance codes are shown during active siren alerts.
+- **Alternative navigation** — when a shelter cannot be reached in time during a siren, users are navigated to the nearest approved building with its entrance code.
+- **Cancel registration** — committee representatives can cancel their building registration.
+
+### Psychology chatbot
+- **AI-powered support** — chatbot providing psychological support and guidance during emergencies.
 
 ### Polish & accessibility
 - Drawer (side) navigation
@@ -239,6 +253,9 @@ Key packages from `frontend/package.json`:
 | `@react-native-async-storage/async-storage` | Local persistence for user settings |
 | `@expo/vector-icons` | Ionicons used throughout the UI |
 | `axios` | HTTP client (used in a few places) |
+| `expo-file-system` | Local file system access |
+| `expo-intent-launcher` | Open files with native apps on Android |
+| `expo-sharing` | Share and preview files on iOS |
 
 Dev / test: `jest`, `jest-expo`, `@testing-library/react-native`, `typescript`, `eslint`, `eslint-config-expo`.
 
@@ -261,6 +278,13 @@ Dev / test: `jest`, `jest-expo`, `@testing-library/react-native`, `typescript`, 
 | `GET` | `/reports` | List all reports (admin) |
 | `POST` | `/api/settings` | Save user settings to MongoDB |
 | `GET` | `/api/settings/{user_id}` | Fetch user settings |
+| `GET` | `/buildings` | List all buildings (admin) |
+| `POST` | `/buildings/register` | Register as committee representative |
+| `PATCH` | `/buildings/{id}/approve` | Approve building registration (admin) |
+| `PATCH` | `/buildings/{id}/reject` | Reject building registration (admin) |
+| `GET` | `/buildings/approved` | List approved buildings with entrance codes |
+| `GET` | `/buildings/{id}/permit` | Get committee certificate file |
+| `POST` | `/api/broadcasts` | Send broadcast message to all users (admin) |
 
 Auto-generated docs are available at `http://localhost:8000/docs` once the backend is running.
 

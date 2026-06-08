@@ -1,15 +1,28 @@
 import React from 'react';
 import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
 import * as Location from 'expo-location';
-import MapScreen from '../app/(tabs)/map';
+import MapScreen, { isShelterAccessible } from '../app/(tabs)/map';
+import { DeviceEventEmitter } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ACCESSIBILITY_SETTINGS_CHANGED_EVENT } from '@/hooks/use-home-geofence';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
+
+// Captured so tests can simulate the user moving (drives the live
+// watchPositionAsync subscription added to the map screen).
+let watchCallback: ((loc: any) => void) | null = null;
+const mockWatchRemove = jest.fn();
 
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  watchPositionAsync: jest.fn((_opts: any, cb: any) => {
+    watchCallback = cb;
+    return Promise.resolve({ remove: mockWatchRemove });
+  }),
   reverseGeocodeAsync: jest.fn(() => Promise.resolve([])),
   geocodeAsync: jest.fn(() => Promise.resolve([])),
+  Accuracy: { High: 4, Balanced: 3 },
 }));
 
 jest.mock('expo-router', () => ({
@@ -117,7 +130,9 @@ const SHELTER_A = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockPostMessage.mockClear();
+  mockWatchRemove.mockClear();
   webOnMessage = null;
+  watchCallback = null;
   global.fetch = jest.fn(() =>
     Promise.resolve({
       ok: true,
@@ -478,5 +493,94 @@ describe('Admin visibility filtering', () => {
     await emitFromWeb({ type: 'ready' });
 
     await waitFor(() => expect(lastSetShelters().length).toBe(2));
+  });
+});
+
+// ─── Accessibility filter (BSPMT17-243) ───────────────────────────────────────
+// Soft filter: tapping ♿ flips `userSettings.isHandicapped` in AsyncStorage
+// and re-sends the shelter list to the WebView with `dimmed:true` on every
+// non-accessible shelter. Dimmed shelters stay clickable — the WebView just
+// renders them at low opacity so the user's eye lands on accessible ones first.
+
+describe('Accessibility filter', () => {
+  const lastSetShelters = () =>
+    (messagesOfType('setShelters').slice(-1)[0]?.data ?? []) as Array<{
+      id: string;
+      dimmed?: boolean;
+    }>;
+
+  // Three shelters with different accessibility profiles, used across tests.
+  const accessible      = { ...SHELTER_A, id: 'acc',  name: 'Accessible',      isAccessible: true,  hasStairs: false };
+  const inaccessible    = { ...SHELTER_A, id: 'ina',  name: 'Not Accessible',  isAccessible: false, hasStairs: false };
+  const accessibleStairs= { ...SHELTER_A, id: 'stair',name: 'Stairs Block It', isAccessible: true,  hasStairs: true  };
+
+  // 1 ── Pure helper: covers all 4 truth-table combinations
+  describe('isShelterAccessible helper', () => {
+    it('is true only when isAccessible && !hasStairs', () => {
+      expect(isShelterAccessible({ isAccessible: true,  hasStairs: false } as any)).toBe(true);
+      expect(isShelterAccessible({ isAccessible: true,  hasStairs: true  } as any)).toBe(false);
+      expect(isShelterAccessible({ isAccessible: false, hasStairs: false } as any)).toBe(false);
+      expect(isShelterAccessible({ isAccessible: undefined, hasStairs: undefined } as any)).toBe(false);
+    });
+  });
+
+  // 2 ── Default state: filter OFF → all shelters sent
+  it('sends all shelters when the filter is off', async () => {
+    global.fetch = makeFetchWithShelters([accessible, inaccessible, accessibleStairs]);
+    grantLocation();
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+    await emitFromWeb({ type: 'ready' });
+
+    await waitFor(() => expect(lastSetShelters().length).toBe(3));
+  });
+
+  // 3 ── Filter ON via event → only accessible shelters appear
+  it('hides non-accessible shelters when the filter is on', async () => {
+    global.fetch = makeFetchWithShelters([accessible, inaccessible, accessibleStairs]);
+    grantLocation();
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+    await emitFromWeb({ type: 'ready' });
+    await waitFor(() => expect(lastSetShelters().length).toBe(3));
+
+    // Turn filter on via the same event Settings would fire
+    (AsyncStorage.getItem as jest.Mock).mockResolvedValueOnce(
+      JSON.stringify({ isHandicapped: true }),
+    );
+    await act(async () => {
+      DeviceEventEmitter.emit(ACCESSIBILITY_SETTINGS_CHANGED_EVENT);
+    });
+
+    await waitFor(() => {
+      const ids = lastSetShelters().map((s: any) => s.id);
+      expect(ids).toEqual(['acc']);     // only the fully accessible one
+      expect(ids).not.toContain('ina');
+      expect(ids).not.toContain('stair');
+    });
+  });
+
+  // 4 ── Live sync: Settings emits the event → map re-loads from storage
+  it('reacts to the ACCESSIBILITY_SETTINGS_CHANGED_EVENT from Settings', async () => {
+    global.fetch = makeFetchWithShelters([accessible, inaccessible]);
+    grantLocation();
+    const { getByTestId } = render(<MapScreen />);
+    await waitFor(() => getByTestId('map-webview'));
+    await emitFromWeb({ type: 'ready' });
+    await waitFor(() => expect(lastSetShelters().length).toBe(2));
+
+    // Simulate Settings being saved with isHandicapped=true
+    (AsyncStorage.getItem as jest.Mock).mockResolvedValueOnce(
+      JSON.stringify({ isHandicapped: true }),
+    );
+    await act(async () => {
+      DeviceEventEmitter.emit(ACCESSIBILITY_SETTINGS_CHANGED_EVENT);
+    });
+
+    await waitFor(() => {
+      const ids = lastSetShelters().map((s: any) => s.id);
+      expect(ids).toContain('acc');
+      expect(ids).not.toContain('ina');
+    });
   });
 });

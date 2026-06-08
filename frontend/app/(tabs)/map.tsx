@@ -24,10 +24,13 @@ import NearbyShelterSheet from "@/components/NearbyShelterSheet";
 import SirenModeSheet, { type SettingsMode } from "@/components/SirenModeSheet";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
 import {
+  DEFAULT_RADIUS_METERS,
   GEOFENCE_SETTINGS_CHANGED_EVENT,
   GEOFENCE_SIM_POSITION_EVENT,
+  ACCESSIBILITY_SETTINGS_CHANGED_EVENT,
 } from "@/hooks/use-home-geofence";
 import { NavigationService } from "@/services/NavigationService";
+import { ReservationService, type AlertKind } from "@/services/ReservationService";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -43,6 +46,8 @@ type ShelterPin = {
   city?: string;
   placeType?: string;
   capacity?: number;
+  reservedPlaces?: number;
+  actualOccupancy?: number;
   accessStatus?: string;
   isFull?: boolean;
   isAccessible?: boolean;
@@ -85,6 +90,14 @@ function shelterParams(s: ShelterPin): string {
   add('lastReportAt', s.lastReportAt);
   add('lastReportType', s.lastReportType);
   return parts.join('&');
+}
+
+// Mobility-impaired users opt into "accessible only" mode. A shelter is
+// considered accessible when it's marked accessible AND has no stairs.
+// Undefined fields are treated as "not accessible" (conservative — we'd
+// rather over-dim than mislead someone with limited mobility).
+export function isShelterAccessible(s: ShelterPin): boolean {
+  return s.isAccessible === true && s.hasStairs !== true;
 }
 
 export function getShelterColor(shelter: ShelterPin): string {
@@ -142,6 +155,7 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
   var userMarker = null;
   var searchMarker = null;
   var homeCircle = null;
+  var buildingMarkers = [];
 
   function send(obj) {
     if (window.ReactNativeWebView) {
@@ -208,6 +222,35 @@ const MAP_HTML = `<!DOCTYPE html><html lang="he"><head>
       }
     }
 
+    else if (msg.type === 'addBuildingMarkers') {
+      for (var bi = 0; bi < buildingMarkers.length; bi++) { map.removeLayer(buildingMarkers[bi]); }
+      buildingMarkers = [];
+      for (var bi = 0; bi < msg.buildings.length; bi++) {
+        var b = msg.buildings[bi];
+        if (!b.lat || !b.lng) continue;
+        var bIcon = L.divIcon({
+          html: '<div style="width:32px;height:32px;border-radius:8px;background:#1a73e8;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:17px;">🏢</div>',
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
+          className: '',
+        });
+        var bm = L.marker([b.lat, b.lng], { icon: bIcon });
+        (function(building) {
+          bm.on('click', function(e) {
+            L.DomEvent.stopPropagation(e);
+            send({ type: 'buildingClick', building: building });
+          });
+        })(b);
+        bm.addTo(map);
+        buildingMarkers.push(bm);
+      }
+    }
+
+    else if (msg.type === 'clearBuildingMarkers') {
+      for (var bi = 0; bi < buildingMarkers.length; bi++) { map.removeLayer(buildingMarkers[bi]); }
+      buildingMarkers = [];
+    }
+
     else if (msg.type === 'setHomeCircle') {
       // Remove the previous circle (if any) so the radius can be updated.
       if (homeCircle) { map.removeLayer(homeCircle); homeCircle = null; }
@@ -269,17 +312,52 @@ export default function MapScreen() {
   // We use this to re-evaluate `userZone` once the data is available.
   const [polygonsReady, setPolygonsReady] = useState(false);
 
+  // Accessibility filter — when ON, non-accessible shelters render dimmed
+  // (still on the map, still clickable, just visually de-emphasized so the
+  // user's eye lands on the ones that match their needs). Mirrored to
+  // `userSettings.isHandicapped` in AsyncStorage so the same flag drives
+  // both this toggle and the Settings screen Switch.
+  const [accessibleOnly, setAccessibleOnly] = useState(false);
+  const [sheetChildrenCount, setSheetChildrenCount] = useState(0);
+  const [sheetHasPets, setSheetHasPets]             = useState(false);
+
   // ─── SimJoystick state — fake GPS for demos / QA ─────────────────────────
   const [simOn, setSimOn]         = useState(false);
   const [simCoords, setSimCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const moveIntent = useRef({ dx: 0, dy: 0 });
   const lastMoveAt = useRef(0);
 
-  // Subscribe to alerts (polling oref.org.il every 3s) for the lifetime of
-  // the map screen. The same hook also receives manual injections fired by
-  // the demo modal — both paths funnel into `setActiveAlert`.
+  // Holds the latest userZone without creating a stale closure inside the
+  // alert subscription. Updated synchronously in a separate effect below
+  // (after userZone is declared via useMemo further down the file).
+  const userZoneRef = useRef<string>('באר שבע');
+
+  // Subscribe to alerts (polling oref.org.il every 3s) and filter to only
+  // show alerts relevant to the user's current zone.
+  // Manual injections (isManual: true) always show — they're already fired
+  // with the correct zone from the demo modal.
+  // Real alerts:
+  //   - Sirens (kind === 'siren') always show — safety > noise.
+  //   - Early warnings only show when the user's zone shares a parent city
+  //     with at least one of the alert's areas. So a user in
+  //     "באר שבע - מערב" sees alerts for "באר שבע - מזרח" too (same city,
+  //     same incoming threat), but not alerts in unrelated cities.
+  //     Mirrors the server-side filter in
+  //     Backend/app/core/alert_dispatcher.py.
   useEffect(() => {
-    return AlertsService.subscribe(setActiveAlert);
+    return AlertsService.subscribe((alert) => {
+      if (alert.isManual || alert.kind === 'siren') {
+        setActiveAlert(alert);
+        return;
+      }
+      const zone = userZoneRef.current;
+      const parentCity = (z: string) => (z || '').split(' - ', 1)[0].trim();
+      const userCity = parentCity(zone);
+      const matches =
+        alert.areas.includes(zone) ||
+        (!!userCity && alert.areas.some(a => parentCity(a) === userCity));
+      if (matches) setActiveAlert(alert);
+    });
   }, []);
 
   // Load the official Pikud HaOref polygons once. `OrefZonesService.load`
@@ -287,6 +365,35 @@ export default function MapScreen() {
   useEffect(() => {
     OrefZonesService.load().then(() => setPolygonsReady(true));
   }, []);
+
+  // ── Accessibility filter — load + sync ──────────────────────────────────
+  // Initial load + re-load every time the screen regains focus, so changes
+  // made on the Settings screen show up when the user comes back.
+  useFocusEffect(useCallback(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('userSettings');
+        if (!raw) return;
+        setAccessibleOnly(!!JSON.parse(raw).isHandicapped);
+      } catch {
+        // Bad JSON in storage — silently ignore, default stays false
+      }
+    })();
+  }, []));
+
+  // Live reload — Settings emits this event right after a successful save,
+  // so if the user changes the Switch while the map is mounted (e.g. via
+  // back-navigation that doesn't re-focus), the toggle still flips.
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(ACCESSIBILITY_SETTINGS_CHANGED_EVENT, () => {
+      AsyncStorage.getItem('userSettings').then(raw => {
+        if (!raw) return;
+        try { setAccessibleOnly(!!JSON.parse(raw).isHandicapped); } catch {}
+      });
+    });
+    return () => sub.remove();
+  }, []);
+
 
   // Resolve the user's Pikud HaOref zone. Order of preference:
   //   1. The official polygon containing the user's coordinates.
@@ -317,6 +424,9 @@ export default function MapScreen() {
     return best ?? 'באר שבע';
   }, [simOn, simCoords, userLocation, shelterPins, polygonsReady]);
 
+  // Keep the ref in sync so the alert subscription closure always reads the
+  // latest zone without needing to re-subscribe on every GPS update.
+  useEffect(() => { userZoneRef.current = userZone; }, [userZone]);
 
   // Helper — send a JSON message into the WebView
   const sendToWeb = useCallback((obj: any) => {
@@ -332,11 +442,15 @@ export default function MapScreen() {
   };
 
   const openShelter = useCallback((sh: ShelterPin) => {
-    const suffix = (!simOn || !simCoords)
-      ? ''
-      : `&fromLat=${simCoords.latitude}&fromLng=${simCoords.longitude}`;
-    router.push(`/shelter-details?${shelterParams(sh)}${suffix}` as any);
-  }, [simOn, simCoords]);
+    const from = (simOn && simCoords)
+      ? simCoords
+      : userLocation
+        ? { latitude: userLocation.latitude, longitude: userLocation.longitude }
+        : null;
+    const fromSuffix = from ? `&fromLat=${from.latitude}&fromLng=${from.longitude}` : '';
+    const alertSuffix = activeAlert ? `&alertKind=${activeAlert.kind}` : '';
+    router.push(`/shelter-details?${shelterParams(sh)}${fromSuffix}${alertSuffix}` as any);
+  }, [simOn, simCoords, userLocation, activeAlert]);
 
   // ── Alert handling — banner taps + siren auto-navigate ──────────────────
   // Kept together here, after `openShelter`, because `handleNearbyPick`
@@ -364,8 +478,19 @@ export default function MapScreen() {
 
   // Push the navigate screen with the siren auto-route params. Pulled out
   // so both the initial siren effect and the SirenModeSheet ("change mode")
-  // call into the same code path.
-  const pushSirenNavigate = useCallback((target: ShelterPin, mode: SettingsMode) => {
+  // call into the same code path. Passes reservation context so the navigate
+  // screen can render the SirenGroupPromptModal and update the count.
+  //
+  // `skipPrompt` is true when the user is being re-routed mid-alert (mode
+  // change after they already answered the count prompt). Without this flag,
+  // the SirenGroupPromptModal would re-open every time we re-push /navigate.
+  const pushSirenNavigate = useCallback((
+    target: ShelterPin,
+    mode: SettingsMode,
+    alert: PikudAlert,
+    initialGroupSize = 1,
+    skipPrompt = false,
+  ) => {
     const suffix = (!simOn || !simCoords)
       ? ''
       : `&fromLat=${simCoords.latitude}&fromLng=${simCoords.longitude}`;
@@ -375,13 +500,57 @@ export default function MapScreen() {
       `&name=${encodeURIComponent(target.name || 'מקלט')}` +
       `&emergency=true` +
       `&mode=${mode}` +
+      `&alertId=${encodeURIComponent(alert.id)}` +
+      `&alertKind=${alert.kind}` +
+      `&shelterId=${encodeURIComponent(target.id)}` +
+      `&initialGroupSize=${initialGroupSize}` +
+      (skipPrompt ? `&skipPrompt=true` : '') +
       suffix;
     router.push(`/navigate?${params}` as any);
   }, [simOn, simCoords]);
 
+  // Locally bump a shelter pin's reservedPlaces / isFull so the marker
+  // recolors immediately after a reservation POST, without re-fetching.
+  const updateShelterPinFromReserve = useCallback((
+    shelterId: string,
+    reservedPlaces: number,
+    isFull: boolean,
+  ) => {
+    setShelterPins(prev =>
+      prev.map(p => p.id === shelterId ? { ...p, reservedPlaces, isFull } : p)
+    );
+  }, []);
+
+  // Reservation POST with local-state side effect. Best-effort: errors
+  // are logged but never block navigation. Returns true on success so
+  // callers can decide whether to surface a toast.
+  const postReservation = useCallback(async (
+    target: ShelterPin,
+    alert: PikudAlert,
+    groupSize: number,
+  ): Promise<boolean> => {
+    if (!user?.id) return false;
+    try {
+      const result = await ReservationService.reserve({
+        shelterId: target.id,
+        userId:    user.id,
+        alertId:   alert.id,
+        alertKind: alert.kind as AlertKind,
+        groupSize,
+      });
+      updateShelterPinFromReserve(target.id, result.reservedPlaces, result.isFull);
+      return true;
+    } catch (e) {
+      console.warn('[map] reservation failed:', e);
+      return false;
+    }
+  }, [user, updateShelterPinFromReserve]);
+
   // Siren → auto-navigate immediately to the nearest usable shelter using
   // the user's saved transport mode (defaults to walking). Dedupes per
   // alert id so a single event never triggers two navigations.
+  // Also auto-POSTs a 1-person reservation so the shelter's reservedPlaces
+  // reflects the user's intent even if they never tap the banner.
   useEffect(() => {
     if (!activeAlert || activeAlert.kind !== 'siren') return;
     if (sirenHandledIdRef.current === activeAlert.id) return;
@@ -389,8 +558,11 @@ export default function MapScreen() {
     if (!target) return;  // no shelter known yet — banner is still up; user can pick manually
     sirenHandledIdRef.current = activeAlert.id;
     lastAutoTargetRef.current = target;
-    pushSirenNavigate(target, savedMode);
-  }, [activeAlert, savedMode, findNearestUsableShelter, pushSirenNavigate]);
+    // Fire reservation in parallel with navigation — don't make the user
+    // wait on a network roundtrip before the route starts loading.
+    postReservation(target, activeAlert, 1);
+    pushSirenNavigate(target, savedMode, activeAlert, 1);
+  }, [activeAlert, savedMode, findNearestUsableShelter, pushSirenNavigate, postReservation]);
 
   // Banner tap → open the right sheet for the current alert kind.
   const handleBannerPress = useCallback(() => {
@@ -399,24 +571,113 @@ export default function MapScreen() {
     else                              setSirenSheetOpen(true);
   }, [activeAlert]);
 
-  // Pre-alarm sheet → user picked a shelter. Navigate the regular (non-
-  // emergency) way so the user still gets to choose transport mode.
-  const handleNearbyPick = useCallback((sh: { id: string }) => {
+  // Pre-alarm sheet → user picked a shelter + group size. POST the
+  // reservation (best-effort), then push directly to /navigate with
+  // reservation context (alertId / shelterId / initialGroupSize) so the
+  // navigate screen can detect arrival and release-on-back correctly.
+  //
+  // We bypass the shelter-details interstitial here on purpose: during an
+  // active alert the user already picked the shelter from the list, and
+  // a detail screen between "tap" and "start route" adds friction. They
+  // still get the regular mode-select (no emergency=true) because pre-
+  // alarm is "head there soon", not "navigate now".
+  const handleNearbyPick = useCallback((sh: { id: string }, groupSize: number) => {
     setNearbySheetOpen(false);
     const full = shelterPins.find(p => p.id === sh.id);
-    if (full) openShelter(full);
-  }, [shelterPins, openShelter]);
+    if (!full || !activeAlert) {
+      // No alert context (shouldn't happen — sheet only opens during an
+      // alert) — fall back to the regular shelter-details path.
+      if (full) openShelter(full);
+      return;
+    }
+    postReservation(full, activeAlert, groupSize);
 
-  // Siren sheet → user changed transport mode. Re-route to the same target
-  // the siren originally picked (cached in `lastAutoTargetRef`). We use
-  // router.push (not replace) because the user is currently on the map —
-  // there's no existing navigate screen on top to replace.
+    const suffix = (!simOn || !simCoords)
+      ? ''
+      : `&fromLat=${simCoords.latitude}&fromLng=${simCoords.longitude}`;
+    const params =
+      `lat=${full.latitude}` +
+      `&lng=${full.longitude}` +
+      `&name=${encodeURIComponent(full.name || 'מקלט')}` +
+      `&alertId=${encodeURIComponent(activeAlert.id)}` +
+      `&alertKind=${activeAlert.kind}` +
+      `&shelterId=${encodeURIComponent(full.id)}` +
+      `&initialGroupSize=${groupSize}` +
+      suffix;
+    router.push(`/navigate?${params}` as any);
+  }, [shelterPins, openShelter, activeAlert, postReservation, simOn, simCoords]);
+
+  // No shelters passed all filters — try to route to the closest approved
+  // registered building instead. If none exists, show safety instructions.
+  const handleNoShelters = useCallback(async () => {
+    setNearbySheetOpen(false);
+    const pos = (simOn && simCoords) ? simCoords : userLocation;
+    try {
+      const res  = await fetch(`${API_URL}/buildings/approved`);
+      const json = await res.json();
+      const buildings: any[] = json.buildings || [];
+      if (buildings.length > 0 && pos) {
+        buildings.sort((a, b) =>
+          Math.hypot(a.lat - pos.latitude, a.lng - pos.longitude) -
+          Math.hypot(b.lat - pos.latitude, b.lng - pos.longitude)
+        );
+        // Show all approved buildings on the map as 🏢 markers
+        sendToWeb({ type: 'addBuildingMarkers', buildings });
+        const closest = buildings[0];
+        const params =
+          `lat=${closest.lat}` +
+          `&lng=${closest.lng}` +
+          `&name=${encodeURIComponent(closest.address || 'בניין מגורים')}` +
+          `&emergency=true`;
+        Alert.alert(
+          'מנווט לבניין מגורים',
+          'מנווט לבניין מגורים. הקוד לכניסה יוצג כשתתחיל האזעקה',
+          [
+            { text: 'בטל', style: 'cancel' },
+            { text: 'נווט', onPress: () => router.push(`/navigate?${params}` as any) },
+          ]
+        );
+      } else {
+        Alert.alert(
+          'אין מקלט בקרבת מקום',
+          'לא נמצא מקלט זמין בטווח. אם תישמע אזעקה: שכב/י על הקרקע, הגן/י על הראש עם הידיים, והתרחק/י מחלונות.',
+          [{ text: 'הבנתי' }]
+        );
+      }
+    } catch {
+      Alert.alert(
+        'אין מקלט בקרבת מקום',
+        'לא נמצא מקלט זמין בטווח. אם תישמע אזעקה: שכב/י על הקרקע, הגן/י על הראש עם הידיים, והתרחק/י מחלונות.',
+        [{ text: 'הבנתי' }]
+      );
+    }
+  }, [userLocation, simOn, simCoords]);
+
+  // Siren sheet → user changed transport mode. Re-route to the same target.
+  // skipPrompt=true so the SirenGroupPromptModal doesn't re-open on the
+  // re-mounted navigate screen — the user already answered earlier.
+  //
+  // Also POSTs a fresh reservation: if the user had cancelled (X'd out
+  // of /navigate before), the unmount cleanup released the reservation.
+  // Re-engaging via the sheet should re-commit them to the shelter. The
+  // upsert is keyed by (user, shelter, alert), so a previously-rolled-back
+  // row stays rolled back and a fresh active row is inserted.
   const handleSirenModePick = useCallback((mode: SettingsMode) => {
     setSirenSheetOpen(false);
     const target = lastAutoTargetRef.current ?? findNearestUsableShelter();
-    if (!target) return;
-    pushSirenNavigate(target, mode);
-  }, [findNearestUsableShelter, pushSirenNavigate]);
+    if (!target || !activeAlert) return;
+    postReservation(target, activeAlert, 1);
+    pushSirenNavigate(target, mode, activeAlert, 1, true);
+  }, [findNearestUsableShelter, pushSirenNavigate, activeAlert, postReservation]);
+
+  // Siren sheet → user adjusted the group-size stepper. Update the
+  // existing reservation against the auto-picked shelter (the same one
+  // navigate.tsx is routing them to).
+  const handleSirenGroupSizeChange = useCallback((groupSize: number) => {
+    const target = lastAutoTargetRef.current;
+    if (!target || !activeAlert) return;
+    postReservation(target, activeAlert, groupSize);
+  }, [activeAlert, postReservation]);
 
   // Load shelters from the API
   useEffect(() => {
@@ -450,6 +711,8 @@ export default function MapScreen() {
               city: sh.city,
               placeType: sh.placeType,
               capacity: sh.capacity,
+              reservedPlaces: sh.reservedPlaces,
+              actualOccupancy: sh.actualOccupancy,
               accessStatus: sh.accessStatus,
               isFull: sh.isFull,
               isAccessible: sh.isAccessible,
@@ -494,6 +757,8 @@ export default function MapScreen() {
           setSavedMode(
             m === 'cycling' || m === 'driving' ? m : 'walking'
           );
+          setSheetChildrenCount(typeof p.childrenCount === 'number' ? p.childrenCount : 0);
+          setSheetHasPets(!!p.hasPets);
         } catch {
           setHome(null);
           setSavedMode('walking');
@@ -502,32 +767,94 @@ export default function MapScreen() {
     }, []),
   );
 
-  // Get user location once permission is granted
+  // ── Live GPS tracking ────────────────────────────────────────────────────
+  // 1) Request foreground permission + grab an initial fix so the dot and
+  //    the camera have somewhere to land.
+  // 2) Once granted, start a watchPositionAsync subscription that updates
+  //    `userLocation` every ~5m. The dot then follows the user as they walk
+  //    around with the app open; the camera does NOT chase them (that'd
+  //    hijack panning) — they tap 📍 to recenter, or open shelter-details
+  //    to navigate.
+  //
+  // The sim joystick (when toggled on) drives a separate fake position; we
+  // don't pause the real watcher because the sim only affects what we
+  // SEND to the WebView, not the real userLocation used by features like
+  // `findNearestUsableShelter` (which intentionally prefers simCoords too
+  // when sim is on — see that callback).
   useEffect(() => {
+    let cancelled = false;
+    let sub: Location.LocationSubscription | null = null;
+
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === "granted") {
-        const loc = await Location.getCurrentPositionAsync({});
-        setUserLocation({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        });
-        setLocationGranted(true);
+      if (status !== "granted") {
+        if (!cancelled) setLoading(false);
+        return;
       }
-      setLoading(false);
+      // Initial fix — feeds the marker and triggers the first camera fly.
+      try {
+        const loc = await Location.getCurrentPositionAsync({});
+        if (!cancelled) {
+          setUserLocation({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+          setLocationGranted(true);
+        }
+      } catch (e) {
+        console.warn('[map] initial GPS fix failed:', e);
+      }
+      if (!cancelled) setLoading(false);
+
+      // Live watcher — fires whenever the user moves at least ~5m.
+      // Accuracy.High matches navigate.tsx; battery cost is acceptable
+      // for an emergency app whose whole job is "where are you right now".
+      try {
+        sub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, distanceInterval: 5 },
+          (loc) => {
+            if (cancelled) return;
+            setUserLocation({
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+            });
+          },
+        );
+        if (cancelled) sub.remove();
+      } catch (e) {
+        console.warn('[map] watchPositionAsync failed:', e);
+      }
     })();
+
+    return () => {
+      cancelled = true;
+      sub?.remove();
+      sub = null;
+    };
   }, []);
 
   // ── Sync data → WebView whenever it (or the data) changes ─────────────
 
   useEffect(() => {
     if (!webReady || shelterPins.length === 0) return;
-    const data = shelterPins.map(s => ({
-      id: s.id, lat: s.latitude, lng: s.longitude, color: getShelterColor(s),
-    }));
+    // Hard accessibility filter — when the user has "Mobility Impaired" on in
+    // Settings, only shelters that are both marked accessible AND have no stairs
+    // are sent to the WebView. Non-accessible shelters are hidden entirely.
+    const data = shelterPins
+      .filter(s => !accessibleOnly || isShelterAccessible(s))
+      .map(s => ({
+        id: s.id,
+        lat: s.latitude,
+        lng: s.longitude,
+        color: getShelterColor(s),
+      }));
     sendToWeb({ type: 'setShelters', data });
-  }, [webReady, shelterPins, sendToWeb]);
+  }, [webReady, shelterPins, accessibleOnly, sendToWeb]);
 
+  // Push every fresh GPS fix into the WebView so the blue dot moves with
+  // the user. The camera only auto-flies once — on the first fix — so the
+  // watcher's ongoing updates don't hijack panning. Tap 📍 to recenter.
+  const didInitialFlyRef = useRef(false);
   useEffect(() => {
     if (!webReady || !userLocation) return;
     sendToWeb({
@@ -535,12 +862,15 @@ export default function MapScreen() {
       lat: userLocation.latitude,
       lng: userLocation.longitude,
     });
-    sendToWeb({
-      type: 'flyTo',
-      lat: userLocation.latitude,
-      lng: userLocation.longitude,
-      zoom: 14,
-    });
+    if (!didInitialFlyRef.current) {
+      didInitialFlyRef.current = true;
+      sendToWeb({
+        type: 'flyTo',
+        lat: userLocation.latitude,
+        lng: userLocation.longitude,
+        zoom: 14,
+      });
+    }
   }, [webReady, userLocation, sendToWeb]);
 
   useEffect(() => {
@@ -576,6 +906,17 @@ export default function MapScreen() {
         setPin(null);
         openShelter(found);
       }
+      return;
+    }
+
+    if (msg.type === 'buildingClick') {
+      const b = msg.building;
+      const fromStr = userLocation
+        ? `&fromLat=${userLocation.latitude}&fromLng=${userLocation.longitude}`
+        : '';
+      router.push(
+        `/shelter-details?lat=${b.lat}&lng=${b.lng}&name=${encodeURIComponent(b.address || 'בניין מגורים')}&alertKind=early${fromStr}` as any
+      );
       return;
     }
 
@@ -756,11 +1097,25 @@ export default function MapScreen() {
             try {
               const saved = await AsyncStorage.getItem("userSettings");
               const prev = saved ? JSON.parse(saved) : {};
+
+              // Resolve the radius before saving: keep what the user
+              // already chose if it's a positive number, otherwise fall
+              // back to the same default the geofence uses so the on-map
+              // circle is always visible when a home is set.
+              const prevRadius = parseFloat(prev.radius);
+              const effectiveRadius =
+                Number.isFinite(prevRadius) && prevRadius > 0
+                  ? prevRadius
+                  : DEFAULT_RADIUS_METERS;
+
               const next = {
                 ...prev,
                 address: pin.name,
                 homeLat: pin.latitude,
                 homeLng: pin.longitude,
+                // Persist as a string — every other code path reads it
+                // back via `parseFloat`, so string keeps the shape stable.
+                radius: String(effectiveRadius),
               };
               await AsyncStorage.setItem("userSettings", JSON.stringify(next));
 
@@ -777,26 +1132,17 @@ export default function MapScreen() {
                     address: pin.name,
                     home_lat: pin.latitude,
                     home_lng: pin.longitude,
-                    exclusion_radius: parseFloat(prev.radius) || 0,
+                    exclusion_radius: effectiveRadius,
                     transport_mode: prev.transportMode || "walking",
                     is_handicapped: !!prev.isHandicapped,
                   }),
                 }).catch(() => {});
               }
 
-              // Refresh the on-map circle immediately. Only show it if a
-              // positive radius is already configured.
-              const radius = parseFloat(prev.radius);
-              if (!isNaN(radius) && radius > 0) {
-                setHome({ lat: pin.latitude, lng: pin.longitude, radius });
-                Alert.alert("Home set", "Your home address has been updated.");
-              } else {
-                setHome(null);
-                Alert.alert(
-                  "Home set",
-                  "Open Settings to set a 'Do Not Notify' radius so the circle appears on the map.",
-                );
-              }
+              // The circle is always shown — we just guaranteed a positive
+              // radius above, so there's no longer a "no radius" branch.
+              setHome({ lat: pin.latitude, lng: pin.longitude, radius: effectiveRadius });
+              Alert.alert("Home set", "Your home address has been updated.");
 
               setPin(null);
             } catch {
@@ -976,7 +1322,7 @@ export default function MapScreen() {
       {/* Pikud HaOref alert — banner overlay + demo injection modal */}
       <AlertBanner
         alert={activeAlert}
-        onDismiss={() => setActiveAlert(null)}
+        onDismiss={() => { setActiveAlert(null); sendToWeb({ type: 'clearBuildingMarkers' }); }}
         onPress={handleBannerPress}
       />
       <AlertInjectModal
@@ -998,13 +1344,20 @@ export default function MapScreen() {
               ? { latitude: userLocation.latitude, longitude: userLocation.longitude }
               : null
         }
+        childrenCount={sheetChildrenCount}
+        isAccessible={accessibleOnly}
+        hasPets={sheetHasPets}
+        mobilityType={savedMode}
+        onNoShelters={handleNoShelters}
       />
 
-      {/* Siren sheet — change transport mode mid-route */}
+      {/* Siren sheet — change transport mode mid-route and/or update
+          the group-size count for the auto-picked shelter. */}
       <SirenModeSheet
         visible={sirenSheetOpen}
         onClose={() => setSirenSheetOpen(false)}
         onPick={handleSirenModePick}
+        onGroupSizeChange={handleSirenGroupSizeChange}
         currentMode={savedMode}
       />
     </View>

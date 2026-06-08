@@ -62,4 +62,35 @@ describe('SirenModeSheet', () => {
     fireEvent.press(getByTestId('siren-sheet-backdrop'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('renders the group-size stepper with the initial value', () => {
+    const { getByTestId } = render(
+      <SirenModeSheet
+        visible
+        onClose={jest.fn()}
+        onPick={jest.fn()}
+        currentMode="walking"
+        initialGroupSize={3}
+      />,
+    );
+    expect(getByTestId('siren-sheet-group-size-value').props.children).toBe(3);
+  });
+
+  it('fires onGroupSizeChange whenever the stepper is bumped', () => {
+    const onGroupSizeChange = jest.fn();
+    const { getByTestId } = render(
+      <SirenModeSheet
+        visible
+        onClose={jest.fn()}
+        onPick={jest.fn()}
+        onGroupSizeChange={onGroupSizeChange}
+        currentMode="walking"
+        initialGroupSize={1}
+      />,
+    );
+    fireEvent.press(getByTestId('siren-sheet-group-size-inc'));  // → 2
+    fireEvent.press(getByTestId('siren-sheet-group-size-inc'));  // → 3
+    expect(onGroupSizeChange).toHaveBeenNthCalledWith(1, 2);
+    expect(onGroupSizeChange).toHaveBeenNthCalledWith(2, 3);
+  });
 });

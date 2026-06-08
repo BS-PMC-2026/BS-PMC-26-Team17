@@ -37,15 +37,34 @@ function classify(raw: { cat?: string; title?: string }): AlertKind {
   return 'siren';
 }
 
+// Window during which a fresh subscriber gets replayed the last emitted
+// alert. Long enough to bridge a cold-start-from-notification-tap (auth
+// loading + login + navigation can easily take a few seconds), short
+// enough that yesterday's siren doesn't surprise the user when they
+// reopen the app the next morning.
+const REPLAY_WINDOW_MS = 5 * 60 * 1000;
+
 class AlertsServiceImpl {
   private listeners: Set<Listener> = new Set();
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastSeenId: string | null = null;
+  // Buffer of the most recent alert so a late-mounting subscriber (e.g.,
+  // the map screen after a cold-start notification tap) doesn't miss it.
+  private lastEmittedAlert: Alert | null = null;
+  private lastEmittedAt: number = 0;
 
-  /** Start polling once a listener subscribes; stop when the last one leaves. */
+  /** Start polling once a listener subscribes; stop when the last one leaves.
+   * Also replays the last alert if it's recent — bridges the cold-start gap
+   * between the notification tap and the map screen actually mounting. */
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     if (this.listeners.size === 1) this.startPolling();
+    if (
+      this.lastEmittedAlert &&
+      Date.now() - this.lastEmittedAt < REPLAY_WINDOW_MS
+    ) {
+      try { listener(this.lastEmittedAlert); } catch { /* swallow */ }
+    }
     return () => {
       this.listeners.delete(listener);
       if (this.listeners.size === 0) this.stopPolling();
@@ -61,6 +80,18 @@ class AlertsServiceImpl {
       areas: [area],
       isManual: true,
     };
+    this.emit(alert);
+  }
+
+  /**
+   * Public entry point used by the push-notification handler when a
+   * server-dispatched Oref alert arrives. Goes through the same dedupe
+   * as the polling path so a single alert never fires twice if both
+   * sources deliver it (push wakes the device, polling catches up).
+   */
+  injectAlert(alert: Alert) {
+    if (alert.id === this.lastSeenId) return;
+    this.lastSeenId = alert.id;
     this.emit(alert);
   }
 
@@ -110,6 +141,8 @@ class AlertsServiceImpl {
   }
 
   private emit(alert: Alert) {
+    this.lastEmittedAlert = alert;
+    this.lastEmittedAt = Date.now();
     for (const l of this.listeners) {
       try { l(alert); } catch { /* listener errors must not break others */ }
     }

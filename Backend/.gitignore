@@ -10,6 +10,10 @@ __pycache__/
 venv/
 *.egg-info/
 
+# Firebase service account — used by the FCM-direct workaround in
+# app/core/fcm_direct.py. Same file as frontend/firebase-service-account.json.
+firebase-service-account.json
+
 # IDE
 .idea/
 .vscode/

@@ -7,6 +7,11 @@ import { ActivityIndicator, View } from 'react-native';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/context/auth';
+import {
+  processColdStartOrefTap,
+  registerOrefNotificationListener,
+  registerOrefTapListener,
+} from '@/services/notifications';
 
 export const unstable_settings = {
   anchor: 'login',
@@ -31,6 +36,25 @@ function RootLayoutNav() {
     }
   }, [isLoading, isLoggedIn, segments]);
 
+  // Listen for Oref alert push notifications at the root so they're
+  // delivered regardless of which screen the user is on. The handler
+  // funnels into AlertsService.injectAlert, which the existing map
+  // screen subscriber consumes — banner + auto-nav fire identically.
+  //
+  // Two listeners + a one-shot cold-start replay:
+  //   - foreground push received        → addNotificationReceivedListener
+  //   - user taps push from outside app → addNotificationResponseReceivedListener
+  //   - app launched BY a tap (cold)    → getLastNotificationResponseAsync
+  useEffect(() => {
+    const recvSub = registerOrefNotificationListener();
+    const tapSub  = registerOrefTapListener();
+    processColdStartOrefTap();   // fire-and-forget; runs once on mount
+    return () => {
+      recvSub.remove();
+      tapSub.remove();
+    };
+  }, []);
+
   if (isLoading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
@@ -47,6 +71,8 @@ function RootLayoutNav() {
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
             <Stack.Screen name="report" options={{ presentation: 'modal', headerShown: false }} />
+            <Stack.Screen name="building-registration" options={{ headerShown: false }} />
+            <Stack.Screen name="cancel-registration" options={{ headerShown: false }} />
           </>
         ) : (
           <>

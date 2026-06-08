@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -16,7 +16,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '@/context/auth';
-import { GEOFENCE_SETTINGS_CHANGED_EVENT } from '@/hooks/use-home-geofence';
+import {
+  GEOFENCE_SETTINGS_CHANGED_EVENT,
+  ACCESSIBILITY_SETTINGS_CHANGED_EVENT,
+} from '@/hooks/use-home-geofence';
 
 // Nominatim suggestion shape (the parts we care about)
 type NominatimResult = {
@@ -33,8 +36,6 @@ type NominatimResult = {
     municipality?: string;
   };
 };
-
-type AddressPick = { label: string; lat: number; lng: number };
 
 // Format a Nominatim result as "Street [number], City". Falls back to
 // display_name's first two segments if the structured fields are missing.
@@ -70,6 +71,12 @@ export default function SettingsScreen() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Building manager registration status (BSPMT17-371/374)
+  const [myRegistration, setMyRegistration] = useState<
+    | { id: string; registrationStatus: string }
+    | null
+  >(null);
+
   // Reload settings every time the screen comes into focus, so updates made
   // from the map (e.g., "Set as Home") show up here without a restart.
   useFocusEffect(
@@ -92,9 +99,26 @@ export default function SettingsScreen() {
         } catch (err) {
           console.error('Failed to load settings:', err);
         }
+
+        // Fetch building registration status — fail silently
+        try {
+          const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
+          if (API_URL && user?.id) {
+            const res = await fetch(`${API_URL}/buildings/my/${user.id}`);
+            if (res.ok) {
+              const json = await res.json();
+              setMyRegistration(json.registration || null);
+            }
+          }
+        } catch {
+          // ignore
+        }
       })();
-    }, []),
+    }, [user?.id]),
   );
+
+  // Cancel-registration UI now lives on its own screen (cancel-registration.tsx).
+  // The Settings button just navigates there.
 
   // Debounced Nominatim search whenever the user types in the address field
   const onAddressChange = (text: string) => {
@@ -222,6 +246,9 @@ export default function SettingsScreen() {
       // Tell the geofence hook to re-evaluate now that home/radius may
       // have changed — otherwise it would wait for the next GPS movement.
       DeviceEventEmitter.emit(GEOFENCE_SETTINGS_CHANGED_EVENT);
+      // Tell the map to re-apply its accessibility filter — the ♿ toggle on
+      // the map mirrors this same `isHandicapped` flag and should flip live.
+      DeviceEventEmitter.emit(ACCESSIBILITY_SETTINGS_CHANGED_EVENT);
 
       Alert.alert('Saved', 'Your preferences have been saved.');
     } catch {
@@ -370,6 +397,33 @@ export default function SettingsScreen() {
         <Text style={styles.saveButtonText}>Save Preferences</Text>
       </TouchableOpacity>
 
+      {/* Building Manager Registration (BSPMT17-371 / 374) */}
+      <View style={styles.adminSection}>
+        <Text style={styles.adminSectionTitle}>Building Manager</Text>
+        {myRegistration ? (
+          <>
+            <Text style={styles.fieldOk}>
+              ✅ Building registered (status: {myRegistration.registrationStatus})
+            </Text>
+            <TouchableOpacity
+              style={[styles.logoutButton, { marginTop: 10 }]}
+              onPress={() => router.push('/cancel-registration' as any)}
+              testID="cancel-building-registration"
+            >
+              <Text style={styles.logoutButtonText}>Cancel Registration</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={styles.adminBtn}
+            onPress={() => router.push('/building-registration' as any)}
+            testID="register-building-button"
+          >
+            <Text style={styles.adminBtnText}>📋 Register as Building Manager</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       {/* Admin-only section. Without the sidebar there's no other entry
           point to the dashboard, so we expose it here. */}
       {user?.role === 'admin' && (
@@ -381,6 +435,13 @@ export default function SettingsScreen() {
             testID="shelter-dashboard-button"
           >
             <Text style={styles.adminBtnText}>📋 Shelter Dashboard</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.adminBtn}
+            onPress={() => router.push('/buildings-dashboard' as any)}
+            testID="buildings-dashboard-button"
+          >
+            <Text style={styles.adminBtnText}>🏢 Buildings Dashboard</Text>
           </TouchableOpacity>
         </View>
       )}

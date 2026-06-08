@@ -23,6 +23,10 @@ import { useAuth } from '@/context/auth';
 // changes register immediately even when the user is sitting still.
 export const GEOFENCE_SETTINGS_CHANGED_EVENT = 'geofence:settings-changed';
 
+// Fired from the Settings screen when the "Mobility Impaired" toggle is
+// saved. The map listens for it and re-applies its accessibility filter
+// (hides non-accessible shelters) without requiring a re-focus.
+
 // Fired from the map's SimJoystick (debug movement). Payload is the
 // simulated lat/lng — or `null` when sim mode is turned off, signaling
 // the hook to resume using the real GPS. While a non-null sim payload
@@ -31,7 +35,15 @@ export const GEOFENCE_SETTINGS_CHANGED_EVENT = 'geofence:settings-changed';
 export const GEOFENCE_SIM_POSITION_EVENT = 'geofence:sim-position';
 export type GeofenceSimPayload = { lat: number; lng: number } | null;
 
-const DEFAULT_RADIUS_METERS = 500;
+// Fired from the Settings screen when the user toggles the "accessible
+// shelter only" preference. The map listens and updates its filter
+// immediately so the change applies without remounting the screen.
+export const ACCESSIBILITY_SETTINGS_CHANGED_EVENT = 'accessibility:settings-changed';
+
+// Exported so map.tsx's "Set as Home" can fall back to the same value
+// when the user has never explicitly chosen a radius. Keeping a single
+// source of truth means the geofence and the on-map circle always agree.
+export const DEFAULT_RADIUS_METERS = 500;
 const MIN_DISTANCE_METERS = 25;
 const MIN_INTERVAL_MS = 10_000;
 // Belt-and-suspenders: even if the user is barely moving (so the

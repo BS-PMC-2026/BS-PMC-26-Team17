@@ -17,3 +17,7 @@ node_modules/
 frontend/google-services.json
 frontend/firebase-service-account.json
 **/GoogleService-Info.plist
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store

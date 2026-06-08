@@ -1,9 +1,12 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import health, auth, shelters, reports, admin, settings, chat
+from app.routes import health, auth, shelters, reports, admin, settings, chat, buildings
 from app.routes.MessageAll import geofence, broadcast
 from app.core.database import client
+from app.core.reservations import sweeper_loop
+from app.core.oref_poller import poller_loop as oref_poller_loop
 
 
 @asynccontextmanager
@@ -13,7 +16,23 @@ async def lifespan(app: FastAPI):
         print("✅ Connected to MongoDB Atlas!")
     except Exception as e:
         print(f"❌ MongoDB connection failed: {e}")
-    yield
+
+    # Kick off the reservation TTL sweeper. It runs forever in the
+    # background, decrementing `reservedPlaces` on shelters as each
+    # ShelterReservation row expires.
+    sweeper_task = asyncio.create_task(sweeper_loop())
+    # And the Pikud HaOref alert poller, which fans new alerts out to
+    # all registered users via Expo push (see app/core/alert_dispatcher).
+    oref_task = asyncio.create_task(oref_poller_loop())
+    try:
+        yield
+    finally:
+        for t in (sweeper_task, oref_task):
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 app = FastAPI(title="ToSafePlace API", version="1.0.0", lifespan=lifespan)
@@ -34,6 +53,7 @@ app.include_router(geofence.router)
 app.include_router(broadcast.router)
 app.include_router(settings.router)
 app.include_router(chat.router)
+app.include_router(buildings.router)
 
 
 @app.on_event("startup")
