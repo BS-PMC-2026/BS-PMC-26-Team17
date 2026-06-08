@@ -105,7 +105,9 @@ async def _log_dispatched_cities(
 
 
 async def _collect_recipients() -> list[dict]:
-    """Users with at least one push token, including home coords."""
+    """Users with at least one push token, including home coords and the
+    last geofence transition (so `_filter_for_early` can tell whether the
+    user is currently inside their home radius)."""
     out: list[dict] = []
     async for u in db["User"].find(
         {
@@ -117,13 +119,15 @@ async def _collect_recipients() -> list[dict]:
         projection={
             "expoPushToken": 1, "fcmToken": 1,
             "homeLat": 1, "homeLng": 1,
+            "lastGeofenceState": 1,
         },
     ):
         out.append({
-            "expoToken": u.get("expoPushToken") or None,
-            "fcmToken":  u.get("fcmToken") or None,
-            "homeLat":   u.get("homeLat"),
-            "homeLng":   u.get("homeLng"),
+            "expoToken":         u.get("expoPushToken") or None,
+            "fcmToken":          u.get("fcmToken") or None,
+            "homeLat":           u.get("homeLat"),
+            "homeLng":           u.get("homeLng"),
+            "lastGeofenceState": u.get("lastGeofenceState"),
         })
     return out
 
@@ -144,17 +148,33 @@ def _filter_for_early(
     recipients: list[dict], affected_cities: set[str],
 ) -> list[dict]:
     """
-    For pre-alarms, keep recipients whose home city is in the affected set.
-    Recipients with no resolvable home are kept (conservative fallback —
-    rather over-notify than miss someone who didn't set their home).
+    For pre-alarms, keep only recipients whose home parent-city is in the
+    affected set. Recipients whose home can't be resolved — no homeLat/Lng
+    set, OR coords that don't fall inside any polygon (gap, road edge,
+    polygons failed to load) — are NOT notified.
+
+    Why no "conservative fallback": this is exactly the bug we're closing.
+    A user in Be'er Sheva whose home coords land just outside any polygon
+    would otherwise get every northern pre-alarm in the country. Pre-alarms
+    are explicitly zone-targeted; over-notifying defeats the feature.
+
+    Sirens still broadcast to everyone — that branch is handled upstream
+    in `dispatch_alert`, so a real attack still wakes a user who hasn't
+    set their home yet.
     """
     out: list[dict] = []
     for r in recipients:
-        home_city = _user_home_city(r)
-        if not home_city:
-            out.append(r)  # unknown home → notify just in case
+        # If the user is currently inside their home radius (geofence reports
+        # "enter"), skip the pre-alarm. They're already at their planned
+        # shelter / safe space and don't need a "head somewhere safe" nudge.
+        # Sirens are untouched — they fire upstream before this filter runs.
+        # Missing lastGeofenceState (user never crossed the boundary yet)
+        # falls through to the normal city match — we only suppress when
+        # we definitively know they're inside.
+        if r.get("lastGeofenceState") == "enter":
             continue
-        if home_city in affected_cities:
+        home_city = _user_home_city(r)
+        if home_city and home_city in affected_cities:
             out.append(r)
     return out
 

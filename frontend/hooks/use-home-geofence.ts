@@ -174,12 +174,23 @@ async function reportEvent(userId: string, event: GeofenceState): Promise<void> 
  * Compare a single GPS reading against the user's current home/radius
  * and fire notifications on transition. Shared by the movement-based
  * watcher and the settings-changed event handler.
+ *
+ * Only real boundary crossings fire. Cases covered:
+ *   - Fresh install: stored state is null → null !== 'inside'/'outside'
+ *     counts as a transition, so the user gets exactly one setup banner.
+ *   - App reopen with no movement: stored state matches → silent.
+ *   - Movement across the boundary: prev !== next → fires.
+ *   - Home / radius changed in Settings: the GEOFENCE_SETTINGS_CHANGED
+ *     event triggers a re-evaluation through this same path, so if the
+ *     new boundary puts the user on the other side, that counts as a
+ *     transition and fires. If the new boundary still leaves them on
+ *     the same side, no notification — which is the whole point of the
+ *     "less spammy" change.
  */
 async function evaluateAndMaybeNotify(
   userId: string,
   coords: { latitude: number; longitude: number },
   stateKey: string,
-  firstReadingFiredRef: { current: boolean },
 ): Promise<void> {
   const settings = await loadCurrentSettings(userId);
   if (!settings) return;
@@ -196,11 +207,7 @@ async function evaluateAndMaybeNotify(
     | GeofenceState
     | null;
 
-  // First reading per session always fires so the user gets a status
-  // banner on app launch. After that, only real transitions trigger.
-  const isFirstReading = !firstReadingFiredRef.current;
-  if (!isFirstReading && prev === next) return;
-  firstReadingFiredRef.current = true;
+  if (prev === next) return;
 
   await AsyncStorage.setItem(stateKey, next);
   await Promise.all([
@@ -214,9 +221,6 @@ export function useHomeGeofence() {
   const userId = user?.id;
   const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Reset on every fresh hook arm so the user gets a status banner the
-  // first time location resolves in a session, regardless of stored state.
-  const firstReadingFiredRef = useRef(false);
   // While the SimJoystick is active, this holds the simulated coords and
   // the GPS-based handlers skip their readings so the simulation owns
   // the geofence check.
@@ -232,24 +236,14 @@ export function useHomeGeofence() {
       // If sim mode is active, use the simulated coords directly and
       // don't poll real GPS — that would override the simulation.
       if (simCoordsRef.current) {
-        await evaluateAndMaybeNotify(
-          userId,
-          simCoordsRef.current,
-          stateKey,
-          firstReadingFiredRef,
-        );
+        await evaluateAndMaybeNotify(userId, simCoordsRef.current, stateKey);
         return;
       }
       try {
         const loc = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
-        await evaluateAndMaybeNotify(
-          userId,
-          loc.coords,
-          stateKey,
-          firstReadingFiredRef,
-        );
+        await evaluateAndMaybeNotify(userId, loc.coords, stateKey);
       } catch (e) {
         console.log('[geofence] one-shot check failed:', e);
       }
@@ -269,12 +263,7 @@ export function useHomeGeofence() {
         },
         async (loc) => {
           if (simCoordsRef.current) return;
-          await evaluateAndMaybeNotify(
-            userId,
-            loc.coords,
-            stateKey,
-            firstReadingFiredRef,
-          );
+          await evaluateAndMaybeNotify(userId, loc.coords, stateKey);
         },
       );
 
@@ -311,7 +300,6 @@ export function useHomeGeofence() {
           userId,
           simCoordsRef.current,
           stateKey,
-          firstReadingFiredRef,
         );
       },
     );
