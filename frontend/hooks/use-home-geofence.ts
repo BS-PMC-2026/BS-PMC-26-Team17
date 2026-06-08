@@ -40,7 +40,10 @@ export type GeofenceSimPayload = { lat: number; lng: number } | null;
 // immediately so the change applies without remounting the screen.
 export const ACCESSIBILITY_SETTINGS_CHANGED_EVENT = 'accessibility:settings-changed';
 
-const DEFAULT_RADIUS_METERS = 500;
+// Exported so map.tsx's "Set as Home" can fall back to the same value
+// when the user has never explicitly chosen a radius. Keeping a single
+// source of truth means the geofence and the on-map circle always agree.
+export const DEFAULT_RADIUS_METERS = 500;
 const MIN_DISTANCE_METERS = 25;
 const MIN_INTERVAL_MS = 10_000;
 // Belt-and-suspenders: even if the user is barely moving (so the

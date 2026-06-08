@@ -267,12 +267,53 @@ async def save_push_token(body: PushTokenRequest):
 
 @router.delete("/push-token/{user_id}")
 async def clear_push_token(user_id: str):
-    """Called on logout so notifications don't follow the previous user."""
+    """Called on logout so notifications don't follow the previous user.
+    Clears both the Expo token and the raw FCM token (workaround field)."""
     try:
         await db["User"].update_one(
             {"_id": ObjectId(user_id)},
-            {"$unset": {"expoPushToken": ""}},
+            {"$unset": {"expoPushToken": "", "fcmToken": ""}},
         )
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid user id")
     return {"message": "Push token cleared"}
+
+
+# ── FCM-direct workaround endpoints ──────────────────────────────────────
+# Android devices register a raw FCM token alongside their Expo token so
+# the dispatcher can bypass Expo's broken FCM V1 routing. iOS doesn't use
+# these — Expo handles APNs delivery fine. See app/core/fcm_direct.py for
+# context and how to test when Expo's bug is fixed.
+
+class FcmTokenRequest(BaseModel):
+    user_id:   str
+    fcm_token: str
+
+
+@router.post("/fcm-token")
+async def save_fcm_token(body: FcmTokenRequest):
+    try:
+        result = await db["User"].update_one(
+            {"_id": ObjectId(body.user_id)},
+            {"$set": {"fcmToken": body.fcm_token}},
+        )
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": "FCM token saved"}
+
+
+@router.delete("/fcm-token/{user_id}")
+async def clear_fcm_token(user_id: str):
+    """Companion to clear_push_token — same semantics, fcmToken-only.
+    The combined clear above unsets both at once; this one is for callers
+    who only want to drop the FCM token."""
+    try:
+        await db["User"].update_one(
+            {"_id": ObjectId(user_id)},
+            {"$unset": {"fcmToken": ""}},
+        )
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    return {"message": "FCM token cleared"}

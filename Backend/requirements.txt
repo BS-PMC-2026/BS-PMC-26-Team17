@@ -9,3 +9,6 @@ mongoengine
 requests
 httpx
 anthropic
+# For the FCM-V1-direct workaround (see app/core/fcm_direct.py).
+# Remove once Expo's push-service bug is fixed and we revert to Expo-only.
+google-auth

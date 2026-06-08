@@ -28,6 +28,7 @@ import NearbyShelterSheet, {
 import SirenModeSheet, { type SettingsMode } from "@/components/SirenModeSheet";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
 import {
+  DEFAULT_RADIUS_METERS,
   GEOFENCE_SETTINGS_CHANGED_EVENT,
   GEOFENCE_SIM_POSITION_EVENT,
   ACCESSIBILITY_SETTINGS_CHANGED_EVENT,
@@ -339,19 +340,26 @@ export default function MapScreen() {
   // show alerts relevant to the user's current zone.
   // Manual injections (isManual: true) always show — they're already fired
   // with the correct zone from the demo modal.
-  // Real alerts are shown only if `alert.areas` contains the user's zone.
-  // When userZone is the generic fallback "באר שבע" we match any sub-zone
-  // (e.g. "באר שבע - מזרח") because we don't know the exact district.
+  // Real alerts:
+  //   - Sirens (kind === 'siren') always show — safety > noise.
+  //   - Early warnings only show when the user's zone shares a parent city
+  //     with at least one of the alert's areas. So a user in
+  //     "באר שבע - מערב" sees alerts for "באר שבע - מזרח" too (same city,
+  //     same incoming threat), but not alerts in unrelated cities.
+  //     Mirrors the server-side filter in
+  //     Backend/app/core/alert_dispatcher.py.
   useEffect(() => {
     return AlertsService.subscribe((alert) => {
-      if (alert.isManual) {
+      if (alert.isManual || alert.kind === 'siren') {
         setActiveAlert(alert);
         return;
       }
       const zone = userZoneRef.current;
+      const parentCity = (z: string) => (z || '').split(' - ', 1)[0].trim();
+      const userCity = parentCity(zone);
       const matches =
         alert.areas.includes(zone) ||
-        (zone === 'באר שבע' && alert.areas.some(a => a.startsWith('באר שבע')));
+        (!!userCity && alert.areas.some(a => parentCity(a) === userCity));
       if (matches) setActiveAlert(alert);
     });
   }, []);
@@ -1111,11 +1119,25 @@ export default function MapScreen() {
             try {
               const saved = await AsyncStorage.getItem("userSettings");
               const prev = saved ? JSON.parse(saved) : {};
+
+              // Resolve the radius before saving: keep what the user
+              // already chose if it's a positive number, otherwise fall
+              // back to the same default the geofence uses so the on-map
+              // circle is always visible when a home is set.
+              const prevRadius = parseFloat(prev.radius);
+              const effectiveRadius =
+                Number.isFinite(prevRadius) && prevRadius > 0
+                  ? prevRadius
+                  : DEFAULT_RADIUS_METERS;
+
               const next = {
                 ...prev,
                 address: pin.name,
                 homeLat: pin.latitude,
                 homeLng: pin.longitude,
+                // Persist as a string — every other code path reads it
+                // back via `parseFloat`, so string keeps the shape stable.
+                radius: String(effectiveRadius),
               };
               await AsyncStorage.setItem("userSettings", JSON.stringify(next));
 
@@ -1132,26 +1154,17 @@ export default function MapScreen() {
                     address: pin.name,
                     home_lat: pin.latitude,
                     home_lng: pin.longitude,
-                    exclusion_radius: parseFloat(prev.radius) || 0,
+                    exclusion_radius: effectiveRadius,
                     transport_mode: prev.transportMode || "walking",
                     is_handicapped: !!prev.isHandicapped,
                   }),
                 }).catch(() => {});
               }
 
-              // Refresh the on-map circle immediately. Only show it if a
-              // positive radius is already configured.
-              const radius = parseFloat(prev.radius);
-              if (!isNaN(radius) && radius > 0) {
-                setHome({ lat: pin.latitude, lng: pin.longitude, radius });
-                Alert.alert("Home set", "Your home address has been updated.");
-              } else {
-                setHome(null);
-                Alert.alert(
-                  "Home set",
-                  "Open Settings to set a 'Do Not Notify' radius so the circle appears on the map.",
-                );
-              }
+              // The circle is always shown — we just guaranteed a positive
+              // radius above, so there's no longer a "no radius" branch.
+              setHome({ lat: pin.latitude, lng: pin.longitude, radius: effectiveRadius });
+              Alert.alert("Home set", "Your home address has been updated.");
 
               setPin(null);
             } catch {
