@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Alert, Modal, Platform,
+  ActivityIndicator, Alert, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -182,16 +182,17 @@ export default function BuildingsDashboard() {
     setViewing(building);
   };
 
-  // URL of the document for the in-app viewer. Android WebView can't render
-  // PDFs natively, so we wrap them with Google Docs viewer there.
+  // URL of the document for the in-app viewer. Only real PDFs go through the
+  // backend's `/viewer` endpoint (Mozilla PDF.js) — Android WebView can't
+  // display PDFs natively, but it renders HTML and images just fine. Routing
+  // HTML certificates through PDF.js makes the worker try to parse `<!DOCTYPE`
+  // as PDF bytes and the loader hangs forever on Android.
   const viewerUrl = (() => {
     if (!viewing) return '';
-    const raw = `${API_URL}/buildings/${viewing.id}/file?user_id=${user?.id}`;
-    const isPdf = (viewing.registrationFileName || '').toLowerCase().endsWith('.pdf');
-    if (Platform.OS === 'android' && isPdf) {
-      return `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(raw)}`;
-    }
-    return raw;
+    const name = (viewing.registrationFileName || '').toLowerCase();
+    const isPdf = /\.pdf$/.test(name);
+    const endpoint = isPdf ? 'viewer' : 'file';
+    return `${API_URL}/buildings/${viewing.id}/${endpoint}?user_id=${user?.id}`;
   })();
 
   const filtered = useMemo(() => {
@@ -429,6 +430,15 @@ export default function BuildingsDashboard() {
               style={{ flex: 1, backgroundColor: '#fff' }}
               originWhitelist={['*']}
               startInLoadingState
+              // Android: allow HTTPS scripts (PDF.js from CDN) inside our
+              // HTTP page — otherwise the PDF.js never loads and the user
+              // sees a blank or the raw binary download fallback.
+              mixedContentMode="always"
+              javaScriptEnabled
+              domStorageEnabled
+              // If the WebView is asked to download a file (Android's default
+              // for PDFs it can't render), fall back to the OS handler.
+              onShouldStartLoadWithRequest={() => true}
               renderLoading={() => (
                 <View style={pdfStyles.loading}>
                   <ActivityIndicator size="large" color="#0a7ea4" />

@@ -1,11 +1,13 @@
 /**
  * Unit tests for use-home-geofence. Drives the hook through a tiny host
  * component, mocks expo-location and AsyncStorage, and asserts:
- *   - First reading in a session fires a notification + POSTs to the
- *     backend with the correct event (regardless of stored state).
- *   - A subsequent reading with no transition is a no-op.
- *   - A real transition (inside → outside) fires both the notification
- *     and the POST.
+ *   - A real transition (inside → outside or outside → inside) fires the
+ *     notification + POSTs to the backend with the correct event.
+ *   - A reading that doesn't cross the boundary is a no-op, even if it's
+ *     the first reading of the session. Prevents "you're inside" banners
+ *     from popping every time the app is reopened.
+ *   - A settings change (home or radius) that puts the user on the other
+ *     side of the new boundary fires on the next evaluation.
  *   - When home isn't configured (0,0 or null), no work happens.
  */
 import React from 'react';
@@ -108,7 +110,7 @@ async function waitForWatcher() {
 }
 
 describe('useHomeGeofence', () => {
-  it('first reading in a session fires notification + reports event (regardless of stored state)', async () => {
+  it('fires a notification when the first reading transitions from the stored state', async () => {
     setSettings({ homeLat: 32.0853, homeLng: 34.7818, radius: '500' });
     // Pretend a previous session left state='inside' in AsyncStorage
     asMock(AsyncStorage.getItem).mockImplementation(async (key: string) => {
@@ -219,6 +221,93 @@ describe('useHomeGeofence', () => {
     expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
     const notif = asMock(Notifications.scheduleNotificationAsync).mock.calls[0][0];
     expect(notif.content.data).toEqual({ type: 'geofence', event: 'inside' });
+  });
+
+  it('does not fire when first reading matches the stored state (no app-open spam)', async () => {
+    // Stored 'outside' from a previous session; current reading is also
+    // outside. With the old "first reading always fires" rule this would
+    // pop a notification on every app launch even though nothing changed.
+    // After the fix it must stay silent.
+    asMock(AsyncStorage.getItem).mockImplementation(async (key: string) => {
+      if (key === 'userSettings') {
+        return JSON.stringify({
+          homeLat: 32.0853,
+          homeLng: 34.7818,
+          radius: '500',
+        });
+      }
+      if (key.startsWith('geofence:lastState:')) return 'outside';
+      return null;
+    });
+
+    render(React.createElement(HookHost));
+    await waitForWatcher();
+
+    await act(async () => {
+      await positionCallback?.({
+        coords: { latitude: 33.0, longitude: 35.0 }, // still outside
+      });
+    });
+
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+    const geofencePosts = (global.fetch as jest.Mock).mock.calls.filter((c) =>
+      String(c[0]).includes('/api/geofence/event'),
+    );
+    expect(geofencePosts).toHaveLength(0);
+  });
+
+  it('fires when a settings change (shrinking the radius) puts the user on the other side', async () => {
+    // User at ~300m from home. radius=500 → inside. After settings save
+    // drops the radius to 100 → outside. The next evaluation through
+    // checkOnce / positionCallback must surface that transition.
+    let storedState: string | null = 'inside';
+    let storedRadius = '500';
+    asMock(AsyncStorage.getItem).mockImplementation(async (key: string) => {
+      if (key === 'userSettings') {
+        return JSON.stringify({
+          homeLat: 32.0853,
+          homeLng: 34.7818,
+          radius: storedRadius,
+        });
+      }
+      if (key.startsWith('geofence:lastState:')) return storedState;
+      return null;
+    });
+    asMock(AsyncStorage.setItem).mockImplementation(async (key: string, val: string) => {
+      if (key.startsWith('geofence:lastState:')) storedState = val;
+    });
+
+    render(React.createElement(HookHost));
+    await waitForWatcher();
+
+    // 1) First reading at ~300m. radius=500 → inside. Stored state is
+    //    already 'inside' so this is silent (the no-spam path).
+    await act(async () => {
+      await positionCallback?.({
+        coords: { latitude: 32.0880, longitude: 34.7818 },
+      });
+    });
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+
+    // 2) Settings save shrinks the radius. Same coords → now outside.
+    //    The settings-changed event drives a re-evaluation; in the test
+    //    we drive the same code path via positionCallback.
+    storedRadius = '100';
+    await act(async () => {
+      await positionCallback?.({
+        coords: { latitude: 32.0880, longitude: 34.7818 },
+      });
+    });
+
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+    const notif = asMock(Notifications.scheduleNotificationAsync).mock.calls[0][0];
+    expect(notif.content.data).toEqual({ type: 'geofence', event: 'outside' });
+    const geofencePosts = (global.fetch as jest.Mock).mock.calls.filter((c) =>
+      String(c[0]).includes('/api/geofence/event'),
+    );
+    expect(geofencePosts).toHaveLength(1);
+    const body = JSON.parse((geofencePosts[0][1] as any).body);
+    expect(body).toEqual({ user_id: 'u1', event: 'exit' });
   });
 
   it('does nothing when home is unset (0,0)', async () => {

@@ -16,6 +16,7 @@ node_modules/
 # Firebase / Google service credentials — never commit
 frontend/google-services.json
 frontend/firebase-service-account.json
+Backend/firebase-service-account.json
 **/GoogleService-Info.plist
 
 # macOS Finder metadata
