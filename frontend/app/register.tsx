@@ -13,6 +13,9 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
+import Screen from '@/components/ui/Screen';
+import { Palette, Radius, Shadow, Spacing, Typography } from '@/constants/theme';
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function RegisterScreen() {
@@ -58,14 +61,15 @@ export default function RegisterScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <Screen variant="light" style={styles.brandBg}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.logoWrapper}>
           <View style={styles.logoCircle}>
-            <Ionicons name="shield-checkmark" size={48} color="#fff" />
+            <Ionicons name="shield-checkmark" size={48} color={Palette.brandOn} />
           </View>
           <Text style={styles.brand}>ToSafePlace</Text>
         </View>
@@ -76,28 +80,28 @@ export default function RegisterScreen() {
 
           {error ? (
             <View style={styles.errorBox}>
-              <Ionicons name="alert-circle" size={16} color="#e74c3c" />
+              <Ionicons name="alert-circle" size={16} color={Palette.danger} />
               <Text style={styles.error}>{error}</Text>
             </View>
           ) : null}
 
           <View style={styles.row}>
             <View style={[styles.inputWrapper, styles.halfInput]}>
-              <Ionicons name="person-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
+              <Ionicons name="person-outline" size={18} color={Palette.textTertiary} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="First Name"
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor={Palette.textTertiary}
                 value={firstName}
                 onChangeText={setFirstName}
               />
             </View>
             <View style={[styles.inputWrapper, styles.halfInput]}>
-              <Ionicons name="person-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
+              <Ionicons name="person-outline" size={18} color={Palette.textTertiary} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="Last Name"
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor={Palette.textTertiary}
                 value={lastName}
                 onChangeText={setLastName}
               />
@@ -105,11 +109,11 @@ export default function RegisterScreen() {
           </View>
 
           <View style={styles.inputWrapper}>
-            <Ionicons name="mail-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
+            <Ionicons name="mail-outline" size={20} color={Palette.textTertiary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Email"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={Palette.textTertiary}
               value={email}
               onChangeText={setEmail}
               keyboardType="email-address"
@@ -118,11 +122,11 @@ export default function RegisterScreen() {
           </View>
 
           <View style={styles.inputWrapper}>
-            <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
+            <Ionicons name="lock-closed-outline" size={20} color={Palette.textTertiary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Password"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={Palette.textTertiary}
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!showPassword}
@@ -131,17 +135,17 @@ export default function RegisterScreen() {
               <Ionicons
                 name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                 size={20}
-                color="#94a3b8"
+                color={Palette.textTertiary}
               />
             </TouchableOpacity>
           </View>
 
           <View style={styles.inputWrapper}>
-            <Ionicons name="call-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
+            <Ionicons name="call-outline" size={20} color={Palette.textTertiary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Telephone"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={Palette.textTertiary}
               value={telephone}
               onChangeText={setTelephone}
               keyboardType="phone-pad"
@@ -149,11 +153,11 @@ export default function RegisterScreen() {
           </View>
 
           <View style={styles.inputWrapper}>
-            <Ionicons name="location-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
+            <Ionicons name="location-outline" size={20} color={Palette.textTertiary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Address"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={Palette.textTertiary}
               value={address}
               onChangeText={setAddress}
             />
@@ -166,11 +170,11 @@ export default function RegisterScreen() {
             activeOpacity={0.85}
           >
             {loading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={Palette.brandOn} />
             ) : (
               <>
                 <Text style={styles.buttonText}>Create Account</Text>
-                <Ionicons name="arrow-forward" size={18} color="#fff" />
+                <Ionicons name="arrow-forward" size={18} color={Palette.brandOn} />
               </>
             )}
           </TouchableOpacity>
@@ -188,89 +192,129 @@ export default function RegisterScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a7ea4' },
-  scroll: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 20, paddingVertical: 32 },
-  logoWrapper: { alignItems: 'center', marginBottom: 20 },
+  flex:    { flex: 1 },
+  brandBg: { backgroundColor: Palette.brand },
+  scroll: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.lg,
+    paddingVertical: Spacing.xxl,
+  },
+  logoWrapper: { alignItems: 'center', marginBottom: Spacing.lg },
   logoCircle: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
+    width: 76, height: 76, borderRadius: 38,
     backgroundColor: 'rgba(255,255,255,0.18)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.35)',
-    marginBottom: 10,
+    marginBottom: Spacing.sm,
   },
-  brand: { fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: 0.5 },
+  brand: {
+    fontSize: 22, fontWeight: '800',
+    color: Palette.brandOn,
+    letterSpacing: 0.5,
+  },
   card: {
     width: '100%',
     maxWidth: 440,
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 8,
+    backgroundColor: Palette.card,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
+    ...Shadow.md,
   },
-  title: { fontSize: 22, fontWeight: '700', color: '#0f172a', textAlign: 'center' },
-  subtitle: { fontSize: 14, color: '#64748b', textAlign: 'center', marginTop: 4, marginBottom: 20 },
-  row: { flexDirection: 'row', gap: 10 },
+  title: {
+    ...Typography.title,
+    color: Palette.textPrimary,
+    textAlign: 'center',
+  },
+  subtitle: {
+    ...Typography.body,
+    color: Palette.textSecondary,
+    textAlign: 'center',
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.lg,
+  },
+  row: { flexDirection: 'row', gap: Spacing.sm },
   halfInput: { flex: 1 },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    marginBottom: 12,
-    paddingHorizontal: 12,
+    borderColor: Palette.borderSubtle,
+    borderRadius: Radius.md,
+    backgroundColor: Palette.bgSubtle,
+    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.md,
   },
-  inputIcon: { marginRight: 8 },
-  input: { flex: 1, paddingVertical: 12, fontSize: 15, color: '#0f172a' },
-  eyeBtn: { padding: 4 },
+  inputIcon: { marginRight: Spacing.sm },
+  input: {
+    flex: 1,
+    paddingVertical: 12,
+    ...Typography.body,
+    color: Palette.textPrimary,
+  },
+  eyeBtn: { padding: Spacing.xs },
   button: {
     flexDirection: 'row',
-    gap: 8,
-    backgroundColor: '#0a7ea4',
-    borderRadius: 12,
-    paddingVertical: 14,
+    gap: Spacing.sm,
+    backgroundColor: Palette.brand,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
-    shadowColor: '#0a7ea4',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    marginTop: Spacing.sm,
+    minHeight: 48,
   },
   buttonDisabled: { opacity: 0.7 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.3 },
-  divider: { flexDirection: 'row', alignItems: 'center', marginTop: 18, marginBottom: 4 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#e2e8f0' },
-  dividerText: { marginHorizontal: 12, color: '#94a3b8', fontSize: 12 },
-  linkButton: { marginTop: 8, alignItems: 'center', paddingVertical: 6 },
-  linkText: { color: '#64748b', fontSize: 14 },
-  linkTextBold: { color: '#0a7ea4', fontWeight: '700' },
+  buttonText: {
+    ...Typography.subheading,
+    color: Palette.brandOn,
+    letterSpacing: 0.3,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.xs,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: Palette.borderSubtle },
+  dividerText: {
+    marginHorizontal: Spacing.md,
+    ...Typography.small,
+    color: Palette.textTertiary,
+  },
+  linkButton: { marginTop: Spacing.sm, alignItems: 'center', paddingVertical: Spacing.xs },
+  linkText: {
+    ...Typography.body,
+    color: Palette.textSecondary,
+  },
+  linkTextBold: {
+    color: Palette.brand,
+    fontWeight: '700',
+  },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#fef2f2',
+    gap: Spacing.sm,
+    backgroundColor: Palette.dangerSoft,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    marginBottom: 14,
+    borderColor: Palette.danger,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
   },
-  error: { color: '#e74c3c', fontSize: 13, flex: 1 },
+  error: {
+    ...Typography.caption,
+    color: Palette.danger,
+    flex: 1,
+  },
 });

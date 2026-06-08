@@ -12,9 +12,12 @@ import {
   Platform,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Location from "expo-location";
+
 import { useAuth } from "@/context/auth";
+import Screen from "@/components/ui/Screen";
+import ScreenHeader from "@/components/ui/ScreenHeader";
+import { Palette, Radius, Spacing, Typography } from "@/constants/theme";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -57,7 +60,6 @@ export default function ReportScreen() {
     shelterName: string;
   }>();
   const { user } = useAuth();
-  const insets = useSafeAreaInsets();
 
   const [category, setCategory] = useState("");
   const [reportType, setReportType] = useState("");
@@ -132,25 +134,15 @@ export default function ReportScreen() {
   const availableTypes = category ? TYPES_BY_CATEGORY[category] ?? [] : [];
 
   return (
-    <View style={[styles.flex, { paddingTop: insets.top }]}>
-      {/* Fixed header — always reachable, respects notch/Dynamic Island */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Submit Report</Text>
-        <TouchableOpacity
-          style={styles.exitBtn}
-          onPress={() => router.back()}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        >
-          <Text style={styles.exitBtnText}>✕</Text>
-        </TouchableOpacity>
-      </View>
+    <Screen variant="light">
+      <ScreenHeader title="Submit Report" />
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
-          contentContainerStyle={[styles.container, { paddingBottom: insets.bottom + 32 }]}
+          contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.shelterName} numberOfLines={2}>
@@ -164,6 +156,7 @@ export default function ReportScreen() {
                 key={c.key}
                 style={[styles.chip, category === c.key && styles.chipSelected]}
                 onPress={() => handleCategorySelect(c.key)}
+                activeOpacity={0.85}
               >
                 <Text style={[styles.chipText, category === c.key && styles.chipTextSelected]}>
                   {c.label}
@@ -181,6 +174,7 @@ export default function ReportScreen() {
                     key={t.key}
                     style={[styles.chip, reportType === t.key && styles.chipSelected]}
                     onPress={() => setReportType(t.key)}
+                    activeOpacity={0.85}
                   >
                     <Text style={[styles.chipText, reportType === t.key && styles.chipTextSelected]}>
                       {t.label}
@@ -195,7 +189,7 @@ export default function ReportScreen() {
           <TextInput
             style={styles.textArea}
             placeholder="Describe the issue..."
-            placeholderTextColor="#999"
+            placeholderTextColor={Palette.textTertiary}
             multiline
             numberOfLines={4}
             value={description}
@@ -206,139 +200,113 @@ export default function ReportScreen() {
           <TextInput
             style={styles.input}
             placeholder="Phone number to contact you"
-            placeholderTextColor="#999"
+            placeholderTextColor={Palette.textTertiary}
             keyboardType="phone-pad"
             value={callbackNumber}
             onChangeText={setCallbackNumber}
           />
 
+          {/* Submit button — kept as TouchableOpacity (not the shared `Button`)
+              because the ActivityIndicator-on-loading flow is custom-styled
+              to match the existing UX. */}
           <TouchableOpacity
             style={[styles.submitBtn, submitting && styles.submitBtnDisabled]}
             onPress={handleSubmit}
             disabled={submitting}
+            activeOpacity={0.85}
           >
             {submitting ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={Palette.textInverse} />
             ) : (
               <Text style={styles.submitBtnText}>Submit Report</Text>
             )}
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: "#f5f6fa" },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#222",
-  },
-  exitBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#f0f0f0",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  exitBtnText: {
-    fontSize: 16,
-    color: "#555",
-    lineHeight: 20,
-  },
-
+  flex: { flex: 1 },
   container: {
-    padding: 20,
+    paddingHorizontal: Spacing.lg,
+    paddingTop:        Spacing.md,
+    paddingBottom:     Spacing.xxxl,
   },
   shelterName: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#222",
-    marginBottom: 8,
+    ...Typography.heading,
+    color: Palette.textPrimary,
+    marginBottom: Spacing.xs,
   },
   sectionLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#555",
-    marginBottom: 10,
-    marginTop: 20,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+    ...Typography.sectionLabel,
+    color: Palette.textTertiary,
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.sm,
   },
   chipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: Spacing.sm,
   },
   chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 22,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.pill,
     borderWidth: 1.5,
-    borderColor: "#ccc",
-    backgroundColor: "#fff",
+    borderColor: Palette.borderSubtle,
+    backgroundColor: Palette.card,
   },
   chipSelected: {
-    borderColor: "#1a73e8",
-    backgroundColor: "#e8f0fe",
+    borderColor:     Palette.brand,
+    backgroundColor: Palette.brandSoft,
   },
   chipText: {
-    fontSize: 15,
-    color: "#555",
+    ...Typography.body,
+    color: Palette.textSecondary,
   },
   chipTextSelected: {
-    color: "#1a73e8",
+    color: Palette.brand,
     fontWeight: "600",
   },
   input: {
     borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: "#222",
-    backgroundColor: "#fff",
+    borderColor: Palette.borderSubtle,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    ...Typography.body,
+    color: Palette.textPrimary,
+    backgroundColor: Palette.card,
   },
   textArea: {
     borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: "#222",
-    backgroundColor: "#fff",
+    borderColor: Palette.borderSubtle,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    ...Typography.body,
+    color: Palette.textPrimary,
+    backgroundColor: Palette.card,
     minHeight: 110,
     textAlignVertical: "top",
   },
+  // Submit reports as a `danger`-variant button visually — a report is a
+  // destructive-sounding "something is wrong here" signal, so the red CTA
+  // tracks the safety semantics.
   submitBtn: {
-    marginTop: 32,
-    backgroundColor: "#E24B4A",
-    borderRadius: 14,
-    paddingVertical: 17,
+    marginTop: Spacing.xl,
+    backgroundColor: Palette.danger,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
     alignItems: "center",
+    justifyContent: "center",
+    minHeight: 48,
   },
-  submitBtnDisabled: {
-    opacity: 0.6,
-  },
+  submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: {
-    color: "#fff",
-    fontSize: 17,
-    fontWeight: "700",
+    ...Typography.subheading,
+    color: Palette.textInverse,
   },
 });

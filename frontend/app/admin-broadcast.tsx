@@ -9,20 +9,20 @@ import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
   StyleSheet,
   Alert,
   ScrollView,
-  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { API_URL } from '@/config';
 import { useAuth } from '@/context/auth';
+import Button from '@/components/ui/Button';
+import Screen from '@/components/ui/Screen';
+import ScreenHeader from '@/components/ui/ScreenHeader';
+import { Palette, Radius, Spacing, Typography } from '@/constants/theme';
 
 export default function AdminBroadcastScreen() {
-  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -65,124 +65,96 @@ export default function AdminBroadcastScreen() {
 
   if (user?.role !== 'admin') {
     return (
-      <View style={[styles.container, styles.center]}>
-        <Text style={styles.deniedText}>Admins only.</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtnLg}>
-          <Text style={styles.backBtnText}>Go back</Text>
-        </TouchableOpacity>
-      </View>
+      <Screen variant="light">
+        <ScreenHeader title="Send Broadcast" />
+        <View style={styles.center}>
+          <Text style={styles.deniedText}>Admins only.</Text>
+          <Button label="Go back" onPress={() => router.back()} variant="primary" />
+        </View>
+      </Screen>
     );
   }
 
   return (
-    <ScrollView
-      style={[styles.container, { paddingTop: insets.top }]}
-      contentContainerStyle={{ paddingBottom: 40 }}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View style={styles.headerRow}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.back()}
-          testID="back-button"
-          accessibilityLabel="Back"
-        >
-          <Text style={styles.backIcon}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.header}>Send Broadcast</Text>
-        <View style={{ width: 36 }} />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.label}>Title</Text>
-        <TextInput
-          style={styles.input}
-          value={title}
-          onChangeText={setTitle}
-          placeholder="e.g. Emergency Drill Today"
-          maxLength={80}
-          autoCorrect={false}
-          testID="title-input"
-        />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.label}>Message</Text>
-        <TextInput
-          style={[styles.input, styles.bodyInput]}
-          value={body}
-          onChangeText={setBody}
-          placeholder="Type the message your users will see…"
-          multiline
-          maxLength={500}
-          testID="body-input"
-        />
-        <Text style={styles.counter}>{body.length}/500</Text>
-      </View>
-
-      <TouchableOpacity
-        style={[styles.sendBtn, !canSend && styles.sendBtnDisabled]}
-        onPress={send}
-        disabled={!canSend}
-        testID="send-button"
+    <Screen variant="light">
+      <ScreenHeader title="Send Broadcast" />
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
       >
-        {sending ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.sendBtnText}>Send to all users</Text>
-        )}
-      </TouchableOpacity>
-    </ScrollView>
+        <View style={styles.section}>
+          <Text style={styles.label}>Title</Text>
+          <TextInput
+            style={styles.input}
+            value={title}
+            onChangeText={setTitle}
+            placeholder="e.g. Emergency Drill Today"
+            placeholderTextColor={Palette.textTertiary}
+            maxLength={80}
+            autoCorrect={false}
+            testID="title-input"
+          />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.label}>Message</Text>
+          <TextInput
+            style={[styles.input, styles.bodyInput]}
+            value={body}
+            onChangeText={setBody}
+            placeholder="Type the message your users will see…"
+            placeholderTextColor={Palette.textTertiary}
+            multiline
+            maxLength={500}
+            testID="body-input"
+          />
+          <Text style={styles.counter}>{body.length}/500</Text>
+        </View>
+
+        <Button
+          label="Send to all users"
+          icon="📣"
+          variant="primary"
+          onPress={send}
+          loading={sending}
+          disabled={!canSend}
+          style={styles.sendCta}
+          testID="send-button"
+        />
+      </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  center: { justifyContent: 'center', alignItems: 'center', padding: 32 },
-  deniedText: { fontSize: 16, color: '#666', marginBottom: 16 },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xxl, gap: Spacing.md },
+  deniedText: { ...Typography.body, color: Palette.textSecondary },
+  scrollContent: { paddingBottom: Spacing.xxxl },
+  section: { paddingHorizontal: Spacing.lg, marginTop: Spacing.lg },
+  label: {
+    ...Typography.subheading,
+    color: Palette.textPrimary,
+    marginBottom: Spacing.xs,
   },
-  backBtn: {
-    width: 36,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backBtnLg: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    backgroundColor: '#0a7ea4',
-    borderRadius: 8,
-  },
-  backBtnText: { color: '#fff', fontWeight: '600' },
-  backIcon: { fontSize: 28, color: '#0a7ea4' },
-  header: { fontSize: 20, fontWeight: '700', color: '#222' },
-  section: { paddingHorizontal: 16, marginTop: 16 },
-  label: { fontSize: 14, fontWeight: '600', color: '#444', marginBottom: 6 },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    backgroundColor: '#fafafa',
+    borderColor: Palette.borderSubtle,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    ...Typography.body,
+    color: Palette.textPrimary,
+    backgroundColor: Palette.bgSubtle,
   },
-  bodyInput: { minHeight: 120, textAlignVertical: 'top' },
-  counter: { fontSize: 12, color: '#999', marginTop: 4, textAlign: 'right' },
-  sendBtn: {
-    marginHorizontal: 16,
-    marginTop: 24,
-    paddingVertical: 14,
-    backgroundColor: '#0a7ea4',
-    borderRadius: 10,
-    alignItems: 'center',
+  bodyInput: { minHeight: 140, textAlignVertical: 'top' },
+  counter: {
+    ...Typography.small,
+    color: Palette.textTertiary,
+    marginTop: Spacing.xs,
+    textAlign: 'right',
   },
-  sendBtnDisabled: { backgroundColor: '#9ec5d4' },
-  sendBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  sendCta: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.xl,
+  },
 });

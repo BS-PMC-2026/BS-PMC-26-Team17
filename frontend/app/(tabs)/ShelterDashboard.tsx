@@ -15,6 +15,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, router } from "expo-router";
 import { useAuth } from "@/context/auth";
 
+import Screen from "@/components/ui/Screen";
+import ScreenHeader from "@/components/ui/ScreenHeader";
+import { DarkPalette, Radius, Spacing } from "@/constants/theme";
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 type Shelter = {
@@ -215,7 +219,7 @@ const dr = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
     borderRadius: 10,
     paddingHorizontal: 16,
     paddingVertical: 14,
@@ -231,7 +235,7 @@ const dr = StyleSheet.create({
     padding: 32,
   },
   menu: {
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
     borderRadius: 14,
     borderWidth: 0.5,
     borderColor: "#3a3a3a",
@@ -284,8 +288,10 @@ function timeAgo(dateStr: string): string {
   return `${days} days ago`;
 }
 
-const CHIP_DEFAULT = { backgroundColor: "#2a2a2a", borderColor: "#444" };
-const CHIP_ACTIVE = { backgroundColor: "#3d3d3d", borderColor: "#999" };
+// Filter chips — neutral slate when off, brand-blue when active so the
+// admin can scan the row and instantly see what's filtering the table.
+const CHIP_DEFAULT = { backgroundColor: DarkPalette.bgSubtle, borderColor: DarkPalette.borderSubtle };
+const CHIP_ACTIVE  = { backgroundColor: DarkPalette.brand,    borderColor: DarkPalette.brand };
 
 export default function ShelterDashboard() {
   const insets = useSafeAreaInsets();
@@ -584,22 +590,10 @@ export default function ShelterDashboard() {
   const tabReports = activeTab === "active" ? filteredActiveReports : historyReports;
 
   return (
-    <View style={[s.container, { paddingTop: Math.max(0, insets.top - 10) }]}>
-      {/* Header row — Back arrow + title.
-          The sidebar is gone; users land here from Settings → Admin section. */}
-      <View style={s.topHeaderRow}>
-        <TouchableOpacity
-          style={s.backBtn}
-          onPress={() => router.back()}
-          testID="back-button"
-          accessibilityLabel="Back"
-        >
-          <Text style={s.backIcon}>‹</Text>
-        </TouchableOpacity>
-        <Text style={s.topHeaderTitle}>Shelter Dashboard</Text>
-        <View style={{ width: 36 }} />
-      </View>
+    <Screen variant="dark">
+      <ScreenHeader title="Shelter Dashboard" dark />
 
+      <View style={s.body}>
       {/* Status cards */}
       <View style={s.statsRow}>
         {[
@@ -1198,16 +1192,26 @@ export default function ShelterDashboard() {
           )}
         </View>
       </Modal>
-    </View>
+      </View>
+    </Screen>
   );
 }
 
 const s = StyleSheet.create({
+  // Outer container — `<Screen variant="dark">` now owns the page background
+  // and safe-area padding, so this style is no longer applied at the root.
+  // Kept only in case other style merges reference it.
   container: {
     flex: 1,
-    backgroundColor: "#181818",
-    padding: 14,
-    paddingTop: 1,
+    backgroundColor: DarkPalette.bg,
+    paddingHorizontal: Spacing.md,
+  },
+  // Horizontal padding wrapper used inside the Screen since Screen itself
+  // only handles safe-area insets, not content padding.
+  body: {
+    flex: 1,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
   },
   topHeaderRow: {
     flexDirection: "row",
@@ -1219,7 +1223,7 @@ const s = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#2a2a2a",
+    backgroundColor: "#1E293B",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1235,7 +1239,7 @@ const s = StyleSheet.create({
   statCard: {
     flex: 1,
     height: 100,
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
     borderRadius: 16,
     paddingHorizontal: 8,
     paddingTop: 8,
@@ -1257,7 +1261,7 @@ const s = StyleSheet.create({
   searchRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
     borderRadius: 14,
     paddingHorizontal: 16,
     marginBottom: 14,
@@ -1279,7 +1283,7 @@ const s = StyleSheet.create({
   },
   headerRow: {
     flexDirection: "row",
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
     borderWidth: 0.5,
@@ -1300,10 +1304,10 @@ const s = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: 0.5,
     borderBottomColor: "#222",
-    backgroundColor: "#1c1c1c",
+    backgroundColor: "#1E293B",
     alignItems: "center",
   },
-  rowAlt: { backgroundColor: "#1f1f1f" },
+  rowAlt: { backgroundColor: "#0F172A" },
   cell: {
     fontSize: 13,
     color: "#ccc",
@@ -1327,7 +1331,7 @@ const s = StyleSheet.create({
 });
 
 const md = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#181818" },
+  container: { flex: 1, backgroundColor: "#0F172A" },
   header: {
     flexDirection: "row",
     padding: 20,
@@ -1343,7 +1347,7 @@ const md = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#2a2a2a",
+    backgroundColor: "#1E293B",
     alignItems: "center",
     justifyContent: "center",
     marginLeft: 12,
@@ -1355,7 +1359,7 @@ const md = StyleSheet.create({
     paddingVertical: 14,
     gap: 12,
     borderBottomWidth: 0.5,
-    borderBottomColor: "#2a2a2a",
+    borderBottomColor: "#1E293B",
   },
   tab: {
     paddingHorizontal: 20,
@@ -1363,7 +1367,7 @@ const md = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 0.5,
     borderColor: "#333",
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
   },
   tabOn: { borderColor: "#BA7517", backgroundColor: "#BA751722" },
   tabTxt: { color: "#888", fontSize: 15, fontWeight: "500" },
@@ -1375,7 +1379,7 @@ const md = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderBottomWidth: 0.5,
-    borderBottomColor: "#2a2a2a",
+    borderBottomColor: "#1E293B",
   },
   filterBtn: {
     paddingHorizontal: 14,
@@ -1383,14 +1387,14 @@ const md = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 0.5,
     borderColor: "#333",
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
   },
   filterBtnOn: { borderColor: "#BA7517", backgroundColor: "#BA751722" },
   filterBtnTxt: { color: "#888", fontSize: 13, fontWeight: "500" },
   filterBtnTxtOn: { color: "#BA7517", fontWeight: "600" },
   reportsList: { padding: 16, gap: 14 },
   reportCard: {
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
     borderRadius: 12,
     padding: 16,
     borderWidth: 0.5,
@@ -1414,7 +1418,7 @@ const md = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 0.5,
     borderColor: "#555",
-    backgroundColor: "#2a2a2a",
+    backgroundColor: "#1E293B",
   },
   updateBtnTxt: { color: "#ccc", fontSize: 13, fontWeight: "600" },
   statusBtnRow: { flexDirection: "row", gap: 8 },
@@ -1428,7 +1432,7 @@ const md = StyleSheet.create({
   },
   statusBtnTxt: { fontSize: 13, fontWeight: "600" },
   doneInput: {
-    backgroundColor: "#1c1c1c",
+    backgroundColor: "#1E293B",
     borderWidth: 0.5,
     borderColor: "#3a3a3a",
     borderRadius: 8,
@@ -1439,7 +1443,7 @@ const md = StyleSheet.create({
 });
 
 const ed = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#181818" },
+  container: { flex: 1, backgroundColor: "#0F172A" },
   content: { padding: 20 },
   header: {
     flexDirection: "row",
@@ -1450,7 +1454,7 @@ const ed = StyleSheet.create({
   title: { fontSize: 18, fontWeight: "700", color: "#fff", flex: 1, marginRight: 12 },
   label: { fontSize: 13, color: "#888", marginBottom: 8, marginTop: 18 },
   input: {
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
     color: "#fff",
     borderRadius: 10,
     paddingHorizontal: 14,
@@ -1466,7 +1470,7 @@ const ed = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 0.5,
     borderColor: "#3a3a3a",
-    backgroundColor: "#242424",
+    backgroundColor: "#1E293B",
   },
   optOn: { borderColor: "#1D9E75", backgroundColor: "#1D9E7522" },
   optTxt: { fontSize: 14, color: "#888" },
@@ -1482,7 +1486,7 @@ const ed = StyleSheet.create({
   saveBtnTxt: { color: "#fff", fontSize: 16, fontWeight: "700" },
   cancelBtn: {
     flex: 1,
-    backgroundColor: "#2a2a2a",
+    backgroundColor: "#1E293B",
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: "center",

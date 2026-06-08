@@ -14,6 +14,8 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
+import Screen from '@/components/ui/Screen';
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 const RESEND_COOLDOWN = 30; // seconds — matches backend RESEND_COOLDOWN_SECONDS
 
@@ -177,10 +179,11 @@ export default function ForgotPasswordScreen() {
   }[step];
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <Screen variant="light" style={styles.container}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
       <ScrollView
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
@@ -197,7 +200,7 @@ export default function ForgotPasswordScreen() {
 
         <View style={styles.card}>
           <TouchableOpacity onPress={goBack} style={styles.backRow} activeOpacity={0.7}>
-            <Ionicons name="chevron-back" size={18} color="#0a7ea4" />
+            <Ionicons name="chevron-back" size={18} color="#1E3A8A" />
             <Text style={styles.backText}>Back</Text>
           </TouchableOpacity>
 
@@ -377,7 +380,8 @@ export default function ForgotPasswordScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
@@ -415,7 +419,7 @@ function PrimaryButton({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#1E3A8A',
   },
   scroll: {
     flexGrow: 1,
@@ -469,7 +473,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   backText: {
-    color: '#0a7ea4',
+    color: '#1E3A8A',
     fontSize: 14,
     fontWeight: '600',
     marginLeft: 2,
@@ -500,7 +504,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#e2e8f0',
   },
-  dotActive: { backgroundColor: '#0a7ea4' },
+  dotActive: { backgroundColor: '#1E3A8A' },
 
   inputWrapper: {
     flexDirection: 'row',
@@ -530,13 +534,13 @@ const styles = StyleSheet.create({
   button: {
     flexDirection: 'row',
     gap: 8,
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#1E3A8A',
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 4,
-    shadowColor: '#0a7ea4',
+    shadowColor: '#1E3A8A',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -551,7 +555,7 @@ const styles = StyleSheet.create({
   },
 
   resendButton: { marginTop: 14, alignItems: 'center', paddingVertical: 8 },
-  resendText: { color: '#0a7ea4', fontSize: 14, fontWeight: '600' },
+  resendText: { color: '#1E3A8A', fontSize: 14, fontWeight: '600' },
   resendTextDisabled: { color: '#94a3b8', fontWeight: '500' },
 
   divider: {
@@ -572,7 +576,7 @@ const styles = StyleSheet.create({
   },
   linkButton: { marginTop: 8, alignItems: 'center', paddingVertical: 6 },
   linkText: { color: '#64748b', fontSize: 14 },
-  linkTextBold: { color: '#0a7ea4', fontWeight: '700' },
+  linkTextBold: { color: '#1E3A8A', fontWeight: '700' },
 
   errorBox: {
     flexDirection: 'row',

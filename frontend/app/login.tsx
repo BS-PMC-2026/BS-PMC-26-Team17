@@ -1,18 +1,21 @@
 import { useState } from 'react';
-
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+
 import { useAuth } from '@/context/auth';
+import Screen from '@/components/ui/Screen';
+import { Palette, Radius, Shadow, Spacing, Typography } from '@/constants/theme';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -56,262 +59,258 @@ export default function LoginScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <View style={styles.logoWrapper}>
-        <View style={styles.logoCircle}>
-          <Ionicons name="shield-checkmark" size={56} color="#fff" />
-        </View>
-        <Text style={styles.brand}>ToSafePlace</Text>
-        <Text style={styles.tagline}>Your safety, our priority</Text>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Sign in to continue</Text>
-
-        {error ? (
-          <View style={styles.errorBox}>
-            <Ionicons name="alert-circle" size={16} color="#e74c3c" />
-            <Text style={styles.error}>{error}</Text>
+    // Screen handles safe areas (notch + Android nav). The brand-blue
+    // background is the auth flow's signature — same colour on all three
+    // auth screens for instant family recognition.
+    <Screen variant="light" style={styles.brandBg}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.logoWrapper}>
+            <View style={styles.logoCircle}>
+              <Ionicons name="shield-checkmark" size={56} color={Palette.brandOn} />
+            </View>
+            <Text style={styles.brand}>ToSafePlace</Text>
+            <Text style={styles.tagline}>Your safety, our priority</Text>
           </View>
-        ) : null}
 
-        <View style={styles.inputWrapper}>
-          <Ionicons name="mail-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor="#94a3b8"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-        </View>
+          <View style={styles.card}>
+            <Text style={styles.title}>Welcome back</Text>
+            <Text style={styles.subtitle}>Sign in to continue</Text>
 
-        <View style={styles.inputWrapper}>
-          <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#94a3b8"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPassword}
-          />
-          <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
-            <Ionicons
-              name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-              size={20}
-              color="#94a3b8"
-            />
-          </TouchableOpacity>
-        </View>
+            {error ? (
+              <View style={styles.errorBox}>
+                <Ionicons name="alert-circle" size={16} color={Palette.danger} />
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : null}
 
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleLogin}
-          disabled={loading}
-          activeOpacity={0.85}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Text style={styles.buttonText}>Sign In</Text>
-              <Ionicons name="arrow-forward" size={18} color="#fff" />
-            </>
-          )}
-        </TouchableOpacity>
+            <View style={styles.inputWrapper}>
+              <Ionicons name="mail-outline" size={20} color={Palette.textTertiary} style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                placeholderTextColor={Palette.textTertiary}
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+            </View>
 
-        <TouchableOpacity
-          style={styles.forgotButton}
-          onPress={() => router.push('/forgot-password' as never)}
-        >
-          <Text style={styles.forgotText}>Forgot password?</Text>
-        </TouchableOpacity>
+            <View style={styles.inputWrapper}>
+              <Ionicons name="lock-closed-outline" size={20} color={Palette.textTertiary} style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                placeholder="Password"
+                placeholderTextColor={Palette.textTertiary}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={Palette.textTertiary}
+                />
+              </TouchableOpacity>
+            </View>
 
-        <View style={styles.divider}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>or</Text>
-          <View style={styles.dividerLine} />
-        </View>
+            {/* Loading state preserved — using TouchableOpacity here instead
+                of <Button /> so the existing test `getByText('Sign In')`
+                still finds the label whether or not the spinner is up. */}
+            <TouchableOpacity
+              style={[styles.primaryButton, loading && styles.buttonDisabled]}
+              onPress={handleLogin}
+              disabled={loading}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+            >
+              {loading ? (
+                <ActivityIndicator color={Palette.brandOn} />
+              ) : (
+                <View style={styles.primaryButtonContent}>
+                  <Text style={styles.primaryButtonText}>Sign In</Text>
+                  <Ionicons name="arrow-forward" size={18} color={Palette.brandOn} />
+                </View>
+              )}
+            </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={() => router.push('/register' as never)}
-        >
-          <Text style={styles.linkText}>
-            New here? <Text style={styles.linkTextBold}>Create an account</Text>
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+            <TouchableOpacity
+              style={styles.forgotButton}
+              onPress={() => router.push('/forgot-password' as never)}
+            >
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity
+              style={styles.linkButton}
+              onPress={() => router.push('/register' as never)}
+            >
+              <Text style={styles.linkText}>
+                New here? <Text style={styles.linkTextBold}>Create an account</Text>
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0a7ea4',
+  flex:     { flex: 1 },
+  brandBg:  { backgroundColor: Palette.brand },
+
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical:   Spacing.xl,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
   },
+
   logoWrapper: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: Spacing.xl,
   },
   logoCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
+    width: 96, height: 96, borderRadius: 48,
     backgroundColor: 'rgba(255,255,255,0.18)',
-    justifyContent: 'center',
-    alignItems: 'center',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.35)',
-    marginBottom: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.md,
   },
   brand: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#fff',
+    ...Typography.title,
+    color: Palette.brandOn,
     letterSpacing: 0.5,
   },
   tagline: {
-    fontSize: 13,
+    ...Typography.caption,
     color: 'rgba(255,255,255,0.85)',
-    marginTop: 4,
+    marginTop: Spacing.xs,
   },
+
   card: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 26,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 8,
+    backgroundColor: Palette.card,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
+    ...Shadow.md,
   },
   title: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#0f172a',
+    ...Typography.title,
+    color: Palette.textPrimary,
     textAlign: 'center',
   },
   subtitle: {
-    fontSize: 14,
-    color: '#64748b',
+    ...Typography.body,
+    color: Palette.textSecondary,
     textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 22,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.xl,
   },
+
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    marginBottom: 14,
-    paddingHorizontal: 12,
+    borderColor: Palette.borderSubtle,
+    borderRadius: Radius.md,
+    backgroundColor: Palette.bgSubtle,
+    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.md,
   },
-  inputIcon: {
-    marginRight: 8,
-  },
+  inputIcon: { marginRight: Spacing.sm },
   input: {
     flex: 1,
     paddingVertical: 13,
-    fontSize: 15,
-    color: '#0f172a',
+    ...Typography.body,
+    color: Palette.textPrimary,
   },
-  eyeBtn: {
-    padding: 4,
-  },
-  button: {
-    flexDirection: 'row',
-    gap: 8,
-    backgroundColor: '#0a7ea4',
-    borderRadius: 12,
-    paddingVertical: 14,
+  eyeBtn: { padding: Spacing.xs },
+
+  primaryButton: {
+    backgroundColor: Palette.brand,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
-    shadowColor: '#0a7ea4',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    marginTop: Spacing.sm,
+    minHeight: 48,
   },
-  buttonDisabled: {
-    opacity: 0.7,
+  primaryButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
   },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
+  primaryButtonText: {
+    ...Typography.subheading,
+    color: Palette.brandOn,
     letterSpacing: 0.3,
   },
+  buttonDisabled: { opacity: 0.7 },
+
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 6,
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.xs,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#e2e8f0',
-  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: Palette.borderSubtle },
   dividerText: {
-    marginHorizontal: 12,
-    color: '#94a3b8',
-    fontSize: 12,
+    marginHorizontal: Spacing.md,
+    ...Typography.small,
+    color: Palette.textTertiary,
   },
-  forgotButton: {
-    marginTop: 10,
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
+
+  forgotButton: { marginTop: Spacing.md, alignItems: 'center', paddingVertical: Spacing.xs },
   forgotText: {
-    color: '#0a7ea4',
-    fontSize: 14,
-    fontWeight: '500',
+    ...Typography.bodyStrong,
+    color: Palette.brand,
   },
-  linkButton: {
-    marginTop: 8,
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
+
+  linkButton: { marginTop: Spacing.sm, alignItems: 'center', paddingVertical: Spacing.xs },
   linkText: {
-    color: '#64748b',
-    fontSize: 14,
+    ...Typography.body,
+    color: Palette.textSecondary,
   },
   linkTextBold: {
-    color: '#0a7ea4',
+    color: Palette.brand,
     fontWeight: '700',
   },
+
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#fef2f2',
+    gap: Spacing.sm,
+    backgroundColor: Palette.dangerSoft,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    marginBottom: 14,
+    borderColor: Palette.danger,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
   },
-  error: {
-    color: '#e74c3c',
-    fontSize: 13,
+  errorText: {
+    ...Typography.caption,
+    color: Palette.danger,
     flex: 1,
   },
 });
