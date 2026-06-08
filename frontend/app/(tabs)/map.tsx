@@ -20,7 +20,11 @@ import { OrefZonesService } from "@/services/OrefZonesService";
 import SimJoystick from "@/components/SimJoystick";
 import AlertBanner from "@/components/AlertBanner";
 import AlertInjectModal from "@/components/AlertInjectModal";
-import NearbyShelterSheet from "@/components/NearbyShelterSheet";
+import NearbyShelterSheet, {
+  BASE_SPEED_MPM,
+  MAX_ETA_MINUTES,
+  computeSpeedMultiplier,
+} from "@/components/NearbyShelterSheet";
 import SirenModeSheet, { type SettingsMode } from "@/components/SirenModeSheet";
 import { SHELTER_STATUS_COLORS } from "@/constants/shelterStatus";
 import {
@@ -600,50 +604,68 @@ export default function MapScreen() {
   }, [shelterPins, openShelter, activeAlert, postReservation, simOn, simCoords]);
 
   // No shelters passed all filters — try to route to the closest approved
-  // registered building instead. If none exists, show safety instructions.
+  // registered building instead. The building has to clear the *same*
+  // reachability ceiling as the shelters (MAX_ETA_MINUTES of walking,
+  // modulated by mode/accessibility/kids); otherwise the user would be sent
+  // 30 minutes away during an alert. If nothing reachable exists, fall
+  // through to the safety-instructions alert.
   const handleNoShelters = useCallback(async () => {
     setNearbySheetOpen(false);
     const pos = (simOn && simCoords) ? simCoords : userLocation;
-    try {
-      const res  = await fetch(`${API_URL}/buildings/approved`);
-      const json = await res.json();
-      const buildings: any[] = json.buildings || [];
-      if (buildings.length > 0 && pos) {
-        buildings.sort((a, b) =>
-          Math.hypot(a.lat - pos.latitude, a.lng - pos.longitude) -
-          Math.hypot(b.lat - pos.latitude, b.lng - pos.longitude)
-        );
-        // Show all approved buildings on the map as 🏢 markers
-        sendToWeb({ type: 'addBuildingMarkers', buildings });
-        const closest = buildings[0];
-        const params =
-          `lat=${closest.lat}` +
-          `&lng=${closest.lng}` +
-          `&name=${encodeURIComponent(closest.address || 'בניין מגורים')}` +
-          `&emergency=true`;
-        Alert.alert(
-          'מנווט לבניין מגורים',
-          'מנווט לבניין מגורים. הקוד לכניסה יוצג כשתתחיל האזעקה',
-          [
-            { text: 'בטל', style: 'cancel' },
-            { text: 'נווט', onPress: () => router.push(`/navigate?${params}` as any) },
-          ]
-        );
-      } else {
-        Alert.alert(
-          'אין מקלט בקרבת מקום',
-          'לא נמצא מקלט זמין בטווח. אם תישמע אזעקה: שכב/י על הקרקע, הגן/י על הראש עם הידיים, והתרחק/י מחלונות.',
-          [{ text: 'הבנתי' }]
-        );
-      }
-    } catch {
+
+    const showSafetyAlert = () => {
       Alert.alert(
         'אין מקלט בקרבת מקום',
         'לא נמצא מקלט זמין בטווח. אם תישמע אזעקה: שכב/י על הקרקע, הגן/י על הראש עם הידיים, והתרחק/י מחלונות.',
         [{ text: 'הבנתי' }]
       );
+    };
+
+    if (!pos) { showSafetyAlert(); return; }
+
+    try {
+      const res  = await fetch(`${API_URL}/buildings/approved`);
+      const json = await res.json();
+      const buildings: any[] = json.buildings || [];
+
+      // Same envelope the sheet uses for shelters.
+      const speedMultiplier = computeSpeedMultiplier(savedMode, accessibleOnly, sheetChildrenCount);
+      const maxReachableM   = MAX_ETA_MINUTES * BASE_SPEED_MPM * speedMultiplier;
+
+      const reachable = buildings
+        .map(b => ({
+          b,
+          distM: NavigationService.haversineM(
+            { latitude: pos.latitude, longitude: pos.longitude },
+            { latitude: b.lat, longitude: b.lng },
+          ),
+        }))
+        .filter(({ distM }) => distM <= maxReachableM)
+        .sort((a, b) => a.distM - b.distM);
+
+      if (reachable.length === 0) { showSafetyAlert(); return; }
+
+      // Show only the reachable buildings on the map as 🏢 markers — listing
+      // unreachable ones would invite the user to tap one that's 30 min away.
+      sendToWeb({ type: 'addBuildingMarkers', buildings: reachable.map(r => r.b) });
+      const closest = reachable[0].b;
+      const params =
+        `lat=${closest.lat}` +
+        `&lng=${closest.lng}` +
+        `&name=${encodeURIComponent(closest.address || 'בניין מגורים')}` +
+        `&emergency=true`;
+      Alert.alert(
+        'מנווט לבניין מגורים',
+        'מנווט לבניין מגורים. הקוד לכניסה יוצג כשתתחיל האזעקה',
+        [
+          { text: 'בטל', style: 'cancel' },
+          { text: 'נווט', onPress: () => router.push(`/navigate?${params}` as any) },
+        ]
+      );
+    } catch {
+      showSafetyAlert();
     }
-  }, [userLocation, simOn, simCoords]);
+  }, [userLocation, simOn, simCoords, savedMode, accessibleOnly, sheetChildrenCount]);
 
   // Siren sheet → user changed transport mode. Re-route to the same target.
   // skipPrompt=true so the SirenGroupPromptModal doesn't re-open on the
@@ -1454,7 +1476,7 @@ const styles = StyleSheet.create({
   // 🆘 emergency contacts — stacked under the 💬 chat button.
   sosFab: {
     position: 'absolute',
-    top: 222,
+    top: 270,
     left: 12,
     backgroundColor: '#fff',
     borderRadius: 24,

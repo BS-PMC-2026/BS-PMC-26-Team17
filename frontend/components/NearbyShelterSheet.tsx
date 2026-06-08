@@ -79,8 +79,29 @@ function isUsable(
   return true;
 }
 
-const BASE_SPEED_MPM = 83; // metres per minute — average walking pace
-const MAX_ETA_MINUTES = 10;
+// Exported so the parent map screen can apply the *same* reachability ceiling
+// to the building fallback (`handleNoShelters`). Without that, a public-shelter
+// scan that finds nothing would silently route the user to a building 30 min
+// away instead of falling through to the safety-instructions overlay.
+export const BASE_SPEED_MPM = 83; // metres per minute — average walking pace
+export const MAX_ETA_MINUTES = 10;
+
+/**
+ * Per-mode walking-speed multiplier. Mirrors the in-component useMemo so the
+ * pre-alarm building fallback in map.tsx can reproduce the exact same ETA
+ * envelope used to filter shelters in the sheet.
+ */
+export function computeSpeedMultiplier(
+  mobilityType: string,
+  isAccessible: boolean,
+  childrenCount: number,
+): number {
+  if (mobilityType === 'driving') return 8;
+  if (mobilityType === 'cycling') return 2.5;
+  if (isAccessible) return 0.6;
+  if (childrenCount > 0) return 0.7;
+  return 1;
+}
 
 export default function NearbyShelterSheet({
   visible, onClose, onPick, shelters, userLocation, limit = 10, initialGroupSize = 1,
@@ -94,13 +115,10 @@ export default function NearbyShelterSheet({
     if (visible) setGroupSize(initialGroupSize);
   }, [visible, initialGroupSize]);
 
-  const speedMultiplier = useMemo(() => {
-    if (mobilityType === 'driving') return 8;
-    if (mobilityType === 'cycling') return 2.5;
-    if (isAccessible) return 0.6;
-    if (childrenCount > 0) return 0.7;
-    return 1;
-  }, [mobilityType, isAccessible, childrenCount]);
+  const speedMultiplier = useMemo(
+    () => computeSpeedMultiplier(mobilityType, isAccessible, childrenCount),
+    [mobilityType, isAccessible, childrenCount],
+  );
 
   console.log('[NearbyShelterSheet]', { speedMultiplier, childrenCount, isAccessible, hasPets, mobilityType });
 

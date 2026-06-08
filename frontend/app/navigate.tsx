@@ -394,11 +394,26 @@ export default function NavigateScreen() {
       const json = await res.json();
       const approved = json.buildings || [];
       console.log('[checkAlternativeNeeded] buildings response:', json, 'approved:', approved);
-      approved.sort((a: any, b: any) =>
-        NavigationService.haversineM(userLocation, { latitude: a.lat, longitude: a.lng }) -
-        NavigationService.haversineM(userLocation, { latitude: b.lat, longitude: b.lng })
-      );
-      const closest = approved[0] ?? null;
+
+      // The shelter just failed the time check — the building has to clear
+      // the same gate, otherwise we'd reroute the user to a "fallback" that's
+      // also unreachable. Filter first, then pick closest of the reachable.
+      // If nothing's reachable, we leave alternativeBuilding=null and the
+      // overlay falls through to mode-specific safety instructions.
+      const reachable = approved
+        .map((b: any) => ({
+          b,
+          distM: NavigationService.haversineM(
+            userLocation,
+            { latitude: b.lat, longitude: b.lng },
+          ),
+        }))
+        .filter(({ distM }: { distM: number }) =>
+          NavigationService.calculateETA(distM, modeRef.current) <= alertTime,
+        )
+        .sort((a: any, b: any) => a.distM - b.distM);
+
+      const closest = reachable[0]?.b ?? null;
       setAlternativeBuilding(closest ? { address: closest.address, entranceCode: closest.entranceCode } : null);
       setShowAlternative(true);
       if (closest) {

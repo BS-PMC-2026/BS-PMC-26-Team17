@@ -118,9 +118,15 @@ const mockHaversineM =
   require('@/services/NavigationService').NavigationService
     .haversineM as jest.Mock;
 
+const mockCalculateETA =
+  require('@/services/NavigationService').NavigationService
+    .calculateETA as jest.Mock;
+
 // Building used in "reachable" tests.
-// Reachability condition: haversineM(user, building) / 83 <= alertTime / 2
-// With alertTime=30 and haversineM=100: 100/83 ≈ 1.2 <= 15 ✓
+// Reachability condition (matches checkAlternativeNeeded in navigate.tsx):
+//   calculateETA(haversineM(user, building), mode) <= alertTime
+// The default mocks return calculateETA=0 and alertTime=30, so any building
+// passes unless an individual test overrides one of them.
 const APPROVED_BUILDING = {
   registrationStatus: 'approved',
   address:            'רחוב הרצל 1, תל אביב',
@@ -139,6 +145,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   // Reset haversineM to "reachable" default (100m < 1245m threshold).
   mockHaversineM.mockReturnValue(100);
+  // Reset calculateETA — individual tests override to simulate "too far".
+  mockCalculateETA.mockReturnValue(0);
 
   mockEmergencyRoute.mockResolvedValue({
     polyline: [], steps: [], distanceM: 500, durationSec: 120,
@@ -196,6 +204,29 @@ describe('navigate.tsx — alternative building navigation', () => {
       { latitude: APPROVED_BUILDING.lat, longitude: APPROVED_BUILDING.lng },
       'foot',
     );
+  });
+
+  it('falls back to safety instructions when the only approved building is also out of range', async () => {
+    // Shelter ETA is too long (default 120s > alertTime 30s) AND the closest
+    // approved building is also unreachable in time (calculateETA → 999s).
+    // The overlay should show mode-specific safety instructions instead of
+    // routing the user to an unreachable "fallback" building.
+    (global.fetch as jest.Mock).mockResolvedValue({
+      json: () => Promise.resolve({ buildings: [APPROVED_BUILDING] }),
+    });
+    mockCalculateETA.mockReturnValue(999); // way over alertTime
+
+    const { getByText, queryByText } = renderNavigate({ ...BASE_PARAMS });
+
+    await waitFor(() =>
+      getByText(/שכבו על הקרקע והגנו על הראש עם הידיים/),
+    );
+    // No building card.
+    expect(queryByText(/קוד כניסה/)).toBeNull();
+    expect(queryByText(/אין מקלט בטווח/)).toBeNull();
+    // Only the original shelter route was fetched — no reroute to the
+    // unreachable building.
+    expect(mockEmergencyRoute).toHaveBeenCalledTimes(1);
   });
 
   it('does not show the alternative overlay when eta <= alertTime', async () => {
