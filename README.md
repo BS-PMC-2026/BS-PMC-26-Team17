@@ -11,7 +11,7 @@ A mobile app that helps people in Israel find and navigate to the nearest safe s
 ### For users
 - **Live map of shelters** — every public shelter, school, parking, and other safe space pinned on the map, color-coded by status (open / closed / locked / full).
 - **Navigate to a shelter** — pick any shelter or anywhere on the map and get turn-by-turn directions tailored to your transport mode (walking / cycling / driving).
-- **Home address with "Do Not Notify" radius** — set your home location either by typing it (Nominatim autocomplete, Israel-restricted) or tapping the map. A circle is drawn on the map showing the radius within which the app won't alert you.
+- **Home address with "Do Not Notify" radius** — set your home location either by typing it (Nominatim autocomplete, Israel-restricted) or tapping the map. A circle is drawn on the map showing the radius within which the app won't alert you (for pre-alarm warnings).
 - **Reports** — tap any shelter to file a report (access issue, capacity, cleanliness, damage, other). Reports include the reporter's location so managers can verify the report was made within 50 m of the shelter.
 - **Forgot password / OTP reset** — full email-based 3-step recovery flow (request code → verify → reset).
 - **Login / Register** with email & password.
@@ -36,7 +36,6 @@ A mobile app that helps people in Israel find and navigate to the nearest safe s
 - **AI-powered support** — chatbot providing psychological support and guidance during emergencies.
 
 ### Polish & accessibility
-- Drawer (side) navigation
 - Hebrew RTL support on data-heavy screens
 - Accessibility mode (prefer step-free shelters)
 - Works on Android, iOS, and Web (with a web-only map fallback)
