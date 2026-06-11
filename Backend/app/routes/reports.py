@@ -204,6 +204,33 @@ async def create_report(body: ReportCreate, background_tasks: BackgroundTasks):
     result = await db["Report"].insert_one(report)
     report_id = str(result.inserted_id)
 
+    # Mutate the shelter so the change is immediately visible to everyone:
+    # marker color flips on the map, shelter-details shows the new status,
+    # and the pre-alarm / siren filters stop suggesting it. Only *verified*
+    # closed/locked reports are allowed to flip the flag — otherwise a user
+    # in another city could mark random shelters as closed. Locked reports
+    # are always verified (the check above rejects unverified ones), so
+    # this gate only affects the "closed" path.
+    if (
+        body.reportCategory == "access"
+        and body.reportType in URGENT_REPORT_TYPES
+        and is_verified
+    ):
+        try:
+            await db["ShelterTest"].update_one(
+                {"_id": ObjectId(body.shelterId)},
+                {"$set": {
+                    "accessStatus":   body.reportType,
+                    "lastReportAt":   report["createdAt"],
+                    "lastReportType": body.reportType,
+                }},
+            )
+        except Exception as e:
+            # Don't fail the report submission if the shelter update has a
+            # transient hiccup — the admin can still triage via the report
+            # itself. Diagnostic print stays in the codebase's existing style.
+            print(f"[reports] failed to update shelter accessStatus: {e}")
+
     # Fan out a push to all admins on urgent access reports (closed/locked).
     # Runs after the response is returned so the user never waits on Expo's servers.
     # Locked reports are guaranteed verified by the check above; closed reports

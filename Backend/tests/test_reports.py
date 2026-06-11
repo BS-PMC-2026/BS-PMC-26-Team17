@@ -56,7 +56,11 @@ def build_db_mock(*, shelter=None, user=None, report_count=0):
     report_coll.insert_one = AsyncMock(return_value=MagicMock(inserted_id=INSERTED_ID))
 
     shelter_coll = MagicMock()
-    shelter_coll.find_one = AsyncMock(return_value=shelter)
+    shelter_coll.find_one  = AsyncMock(return_value=shelter)
+    # Verified closed/locked reports now flip the shelter's accessStatus.
+    # AsyncMock so the awaited call in create_report doesn't crash and tests
+    # can assert it was (or wasn't) called.
+    shelter_coll.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
 
     user_coll = MagicMock()
     user_coll.find_one = AsyncMock(return_value=user)
@@ -391,6 +395,109 @@ async def test_access_category_with_non_urgent_type_does_not_trigger(async_clien
         )
 
     notify_mock.assert_not_called()
+
+
+# ── Shelter accessStatus mutation ───────────────────────────────────────────
+# A verified closed/locked report should flip the ShelterTest doc's
+# accessStatus so the change is immediately visible to every other user
+# (marker color on the map, shelter-details panel, pre-alarm filter).
+# Unverified closed reports record the Report but must NOT mutate the
+# shelter — otherwise anyone could mark random shelters as closed from
+# the other side of the country.
+
+
+@pytest.mark.asyncio
+async def test_verified_closed_report_marks_shelter_as_closed(async_client):
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    shelter_coll = db["ShelterTest"]
+    with patch("app.routes.reports.db", db), \
+         patch("app.routes.reports._notify_admins_urgent_report"):
+        await async_client.post(
+            "/reports",
+            json=base_body(
+                reportCategory="access",
+                reportType="closed",
+                reporterLat=32.0853,
+                reporterLng=34.7818,  # at the shelter → verified
+            ),
+        )
+
+    shelter_coll.update_one.assert_awaited_once()
+    filter_arg, update_arg = shelter_coll.update_one.await_args.args
+    assert filter_arg == {"_id": ObjectId(SHELTER_ID)}
+    assert update_arg["$set"]["accessStatus"]   == "closed"
+    assert update_arg["$set"]["lastReportType"] == "closed"
+    assert "lastReportAt" in update_arg["$set"]
+
+
+@pytest.mark.asyncio
+async def test_verified_locked_report_marks_shelter_as_locked(async_client):
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    shelter_coll = db["ShelterTest"]
+    with patch("app.routes.reports.db", db), \
+         patch("app.routes.reports._notify_admins_urgent_report"):
+        await async_client.post(
+            "/reports",
+            json=base_body(
+                reportCategory="access",
+                reportType="locked",
+                reporterLat=32.0853,
+                reporterLng=34.7818,  # verified — locked requires this
+            ),
+        )
+
+    shelter_coll.update_one.assert_awaited_once()
+    _, update_arg = shelter_coll.update_one.await_args.args
+    assert update_arg["$set"]["accessStatus"] == "locked"
+
+
+@pytest.mark.asyncio
+async def test_unverified_closed_report_does_not_mutate_shelter(async_client):
+    """Closed reports CAN be unverified (they save + notify). But an
+    unverified one mustn't flip the shelter's accessStatus — too easy
+    to abuse from a distance."""
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    shelter_coll = db["ShelterTest"]
+    with patch("app.routes.reports.db", db), \
+         patch("app.routes.reports._notify_admins_urgent_report"):
+        await async_client.post(
+            "/reports",
+            json=base_body(
+                reportCategory="access",
+                reportType="closed",
+                reporterLat=32.0900,  # ~520m away → unverified
+                reporterLng=34.7818,
+            ),
+        )
+
+    shelter_coll.update_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_urgent_report_does_not_mutate_shelter(async_client):
+    """Cleanliness / capacity / damage shouldn't flip accessStatus."""
+    db, _ = build_db_mock(
+        shelter={"_id": ObjectId(SHELTER_ID), "lat": 32.0853, "lng": 34.7818},
+        user={"_id": ObjectId(USER_ID), "telephone": "0521234567"},
+    )
+    shelter_coll = db["ShelterTest"]
+    with patch("app.routes.reports.db", db), \
+         patch("app.routes.reports._notify_admins_urgent_report"):
+        await async_client.post(
+            "/reports",
+            json=base_body(reportCategory="cleanliness", reportType="dirty"),
+        )
+
+    shelter_coll.update_one.assert_not_awaited()
 
 
 # ── GET /reports ────────────────────────────────────────────────────────────

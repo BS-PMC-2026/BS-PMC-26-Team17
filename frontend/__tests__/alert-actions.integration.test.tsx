@@ -40,9 +40,21 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   removeItem: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('@react-navigation/native', () => ({
-  useFocusEffect: jest.fn(),
-}));
+jest.mock('@react-navigation/native', () => {
+  const React = require('react');
+  return {
+    // Default implementation runs the focus callback inside a real
+    // useEffect so the cleanup (e.g. the map's `clearInterval`) actually
+    // fires on unmount. Individual tests can still .mockImplementation()
+    // for their own scenarios.
+    useFocusEffect: jest.fn((cb: any) => {
+      React.useEffect(() => {
+        const cleanup = cb();
+        return typeof cleanup === 'function' ? cleanup : undefined;
+      }, []);
+    }),
+  };
+});
 
 // Use a logged-in user so reservation POSTs can identify the reserver.
 jest.mock('@/context/auth', () => ({
@@ -218,8 +230,16 @@ beforeEach(() => {
   mockArrive.mockClear();
   alertListener = null;
   webOnMessage = null;
-  // Run the focus effect inline — settings are loaded from AsyncStorage here.
-  mockUseFocusEffect.mockImplementation((cb: any) => { cb(); });
+  // Reset the focus-effect mock to its default useEffect-wrapping behaviour
+  // (defined in the jest.mock call above) so each test starts clean and the
+  // 60s shelter-refresh interval is properly torn down on unmount.
+  const React = require('react');
+  mockUseFocusEffect.mockImplementation((cb: any) => {
+    React.useEffect(() => {
+      const cleanup = cb();
+      return typeof cleanup === 'function' ? cleanup : undefined;
+    }, []);
+  });
   mockLocation.requestForegroundPermissionsAsync.mockResolvedValue({ status: 'granted' } as any);
   mockLocation.getCurrentPositionAsync.mockResolvedValue({
     coords: { latitude: 32.080, longitude: 34.780 },
