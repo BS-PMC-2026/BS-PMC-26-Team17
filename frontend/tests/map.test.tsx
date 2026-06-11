@@ -36,12 +36,21 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   removeItem: jest.fn(() => Promise.resolve()),
 }));
 
-// useFocusEffect is invoked when the map gains focus to refresh the home circle.
-// In tests we just no-op it — the relevant settings loading is exercised
-// indirectly through the AsyncStorage mock above.
-jest.mock('@react-navigation/native', () => ({
-  useFocusEffect: jest.fn(),
-}));
+// useFocusEffect fires the callback on focus + cleans up on blur. The map
+// now also uses it to refresh shelters whenever the screen regains focus.
+// In tests we invoke the callback once via a regular useEffect so the
+// shelter list (and the home circle that piggybacks on it) actually load.
+jest.mock('@react-navigation/native', () => {
+  const React = require('react');
+  return {
+    useFocusEffect: (cb: () => void | (() => void)) => {
+      React.useEffect(() => {
+        const cleanup = cb();
+        return typeof cleanup === 'function' ? cleanup : undefined;
+      }, []);
+    },
+  };
+});
 
 // Auth context isn't relevant to the map's rendering tests, so stub it out.
 jest.mock('@/context/auth', () => ({

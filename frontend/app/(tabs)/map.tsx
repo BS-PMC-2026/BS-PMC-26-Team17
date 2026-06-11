@@ -701,60 +701,73 @@ export default function MapScreen() {
     postReservation(target, activeAlert, groupSize);
   }, [activeAlert, postReservation]);
 
-  // Load shelters from the API
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(`${API_URL}/shelters`);
-        const data = await res.json();
-        const shelters = data.shelters || [];
+  // Pull the shelter list. Pulled out into a callback so we can fire it
+  // from multiple places: initial mount, every time the map regains focus
+  // (so a returning reporter sees their own update), and on a 60s poll
+  // (so other users' reports show up while the map stays open).
+  const loadShelters = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/shelters`);
+      const data = await res.json();
+      const shelters = data.shelters || [];
 
-        const pins: ShelterPin[] = [];
-        for (const sh of shelters) {
-          const lat = sh.lat ?? sh.latitude;
-          const lng = sh.lng ?? sh.longitude;
-          // Admins can flag a shelter as `isActive=false` (no longer exists)
-          // or `isVisibleOnMap=false` (hidden from public view). Skip both.
-          // Undefined values are kept (back-compat with older records).
-          if (sh.isActive === false || sh.isVisibleOnMap === false) {
-            continue;
-          }
-          if (typeof lat === "number" && typeof lng === "number" && lat !== 0) {
-            pins.push({
-              id: sh.id ?? sh._id ?? `${lat}-${lng}-${sh.name}`,
-              latitude: lat,
-              longitude: lng,
-              name: sh.name || "",
-              address: sh.address || "",
-              neighborhood: sh.neighborhood,
-              // ShelterTest stores the area as `alertZone`; fall back to it so
-              // the Area row in shelter-details is populated correctly.
-              area: sh.area ?? sh.alertZone,
-              city: sh.city,
-              placeType: sh.placeType,
-              capacity: sh.capacity,
-              reservedPlaces: sh.reservedPlaces,
-              actualOccupancy: sh.actualOccupancy,
-              accessStatus: sh.accessStatus,
-              isFull: sh.isFull,
-              isAccessible: sh.isAccessible,
-              hasStairs: sh.hasStairs,
-              petIssueReported: sh.petIssueReported,
-              cleanlinessStatus: sh.cleanlinessStatus,
-              shouldBeOpen: sh.shouldBeOpen,
-              lastReportAt: sh.lastReportAt,
-              lastReportType: sh.lastReportType,
-              isActive: sh.isActive,
-              isVisibleOnMap: sh.isVisibleOnMap,
-            });
-          }
+      const pins: ShelterPin[] = [];
+      for (const sh of shelters) {
+        const lat = sh.lat ?? sh.latitude;
+        const lng = sh.lng ?? sh.longitude;
+        // Admins can flag a shelter as `isActive=false` (no longer exists)
+        // or `isVisibleOnMap=false` (hidden from public view). Skip both.
+        // Undefined values are kept (back-compat with older records).
+        if (sh.isActive === false || sh.isVisibleOnMap === false) {
+          continue;
         }
-        setShelterPins(pins);
-      } catch (e) {
-        console.error("Failed to load shelters:", e);
+        if (typeof lat === "number" && typeof lng === "number" && lat !== 0) {
+          pins.push({
+            id: sh.id ?? sh._id ?? `${lat}-${lng}-${sh.name}`,
+            latitude: lat,
+            longitude: lng,
+            name: sh.name || "",
+            address: sh.address || "",
+            neighborhood: sh.neighborhood,
+            // ShelterTest stores the area as `alertZone`; fall back to it so
+            // the Area row in shelter-details is populated correctly.
+            area: sh.area ?? sh.alertZone,
+            city: sh.city,
+            placeType: sh.placeType,
+            capacity: sh.capacity,
+            reservedPlaces: sh.reservedPlaces,
+            actualOccupancy: sh.actualOccupancy,
+            accessStatus: sh.accessStatus,
+            isFull: sh.isFull,
+            isAccessible: sh.isAccessible,
+            hasStairs: sh.hasStairs,
+            petIssueReported: sh.petIssueReported,
+            cleanlinessStatus: sh.cleanlinessStatus,
+            shouldBeOpen: sh.shouldBeOpen,
+            lastReportAt: sh.lastReportAt,
+            lastReportType: sh.lastReportType,
+            isActive: sh.isActive,
+            isVisibleOnMap: sh.isVisibleOnMap,
+          });
+        }
       }
-    })();
+      setShelterPins(pins);
+    } catch (e) {
+      console.error("Failed to load shelters:", e);
+    }
   }, []);
+
+  // Re-fetch on focus (returning from /report or any other screen) AND on
+  // a 60s heartbeat while the map is mounted, so a closed/locked report
+  // submitted by anyone propagates within a minute without needing the
+  // app to be restarted.
+  useFocusEffect(
+    useCallback(() => {
+      loadShelters();
+      const id = setInterval(loadShelters, 60_000);
+      return () => clearInterval(id);
+    }, [loadShelters]),
+  );
 
   // Reload home settings every time the map gains focus, so the circle
   // reflects whatever the user most recently saved in Settings.
