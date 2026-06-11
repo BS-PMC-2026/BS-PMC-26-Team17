@@ -108,6 +108,8 @@ BS-PMC-26-Team17/
 
 ## Installation
 
+APK link: https://expo.dev/accounts/amir-boltov/projects/ToSafePlace/builds/a93b12ff-e76f-40c8-baaa-ae7c00039a6c
+
 Clone the repo:
 
 ```bash
@@ -286,6 +288,10 @@ Dev / test: `jest`, `jest-expo`, `@testing-library/react-native`, `typescript`, 
 | `POST` | `/api/broadcasts` | Send broadcast message to all users (admin) |
 
 Auto-generated docs are available at `http://localhost:8000/docs` once the backend is running.
+
+---
+
+Backend azure server: tosafeplace-api-drcachajddgudvau.israelcentral-01.azurewebsites.net
 
 ---
 
