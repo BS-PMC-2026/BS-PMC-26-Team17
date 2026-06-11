@@ -162,7 +162,7 @@ npm install
 Optional — if you want to point the app at a different backend URL (e.g., your machine's LAN IP so a real phone can reach it), create `frontend/.env.local`:
 
 ```env
-EXPO_PUBLIC_API_URL=http://192.168.1.42:8000
+EXPO_PUBLIC_API_URL=http://{your-ip-address}:8000
 ```
 
 ---
